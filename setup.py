@@ -8,6 +8,7 @@ setting = {
         'name': '늑대닷컴 다운',
         'list': [
             {'uri': 'basic/setting', 'name': '설정'},
+            {'uri': 'basic/browse',  'name': '목록'},
             {'uri': 'basic/manual',  'name': '수동 다운로드'},
             {'uri': 'basic/status',  'name': '진행 상황'},
             {'uri': 'basic/list',    'name': '다운로드 이력'},
