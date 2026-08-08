@@ -301,6 +301,49 @@ class WolfClient:
             logger=self.logger)
 
     @staticmethod
+    def _decode_html(r) -> str:
+        """응답 HTML 을 올바른 문자셋으로 디코드.
+
+        늑대닷컴은 본문이 EUC-KR(cp949)인데 응답 헤더가 `Charset=euc-kr`
+        (대문자 C)로 와서 curl_cffi 가 charset 을 못 잡고 utf-8 로 디코드 →
+        한글이 깨진다. 그래서 bytes(`content`)를 직접 받아 문자셋을
+        헤더/meta/기본값(euc-kr) 순으로 판별해 디코드한다.
+        FlareSolverr 응답은 이미 유니코드로 렌더돼 오므로 `.text` 사용.
+        """
+        if isinstance(r, _FSResponse):
+            return r.text or ''
+        content = getattr(r, 'content', None)
+        if not content:
+            return getattr(r, 'text', '') or ''
+        enc = None
+        # 1) Content-Type charset (대소문자 무시)
+        try:
+            ct = r.headers.get('content-type') or r.headers.get('Content-Type') or ''
+        except Exception:
+            ct = ''
+        m = re.search(r'charset\s*=\s*["\']?\s*([\w\-]+)', ct or '', re.I)
+        if m:
+            enc = m.group(1)
+        # 2) 본문 <meta charset=...>
+        if not enc:
+            m = re.search(rb'charset\s*=\s*["\']?\s*([\w\-]+)', content[:2048], re.I)
+            if m:
+                try:
+                    enc = m.group(1).decode('ascii', 'ignore')
+                except Exception:
+                    enc = None
+        # 3) 기본값: 늑대닷컴은 euc-kr
+        if not enc:
+            enc = 'euc-kr'
+        el = enc.strip().lower()
+        if el in ('euc-kr', 'euckr', 'ks_c_5601-1987', 'ksc5601'):
+            el = 'cp949'   # cp949 가 euc-kr 상위호환 — 더 안전
+        try:
+            return content.decode(el, errors='replace')
+        except Exception:
+            return content.decode('cp949', errors='replace')
+
+    @staticmethod
     def _parse_cookie_string(raw: str) -> List[Tuple[str, str]]:
         """`k1=v1; k2=v2` / 줄바꿈 / 콤마 구분 → [(name, value), ...]"""
         out: List[Tuple[str, str]] = []
@@ -404,7 +447,7 @@ class WolfClient:
             raise WolfError(f'work not found: {work_id}')
         if r.status_code != 200:
             raise WolfError(f'work HTTP {r.status_code}: {work_id}')
-        html = r.text or ''
+        html = self._decode_html(r)
         body_lower = html[:5000].lower()
         if 'just a moment' in body_lower or 'cdn-cgi/challenge' in body_lower:
             raise BlockedError(f'cf challenge on work page: {work_id}')
@@ -429,7 +472,7 @@ class WolfClient:
                 break
             if rp.status_code != 200:
                 break
-            page_eps = self._parse_episodes(rp.text or '')
+            page_eps = self._parse_episodes(self._decode_html(rp))
             new_cnt = 0
             for ep in page_eps:
                 if ep['ep_url_id'] not in eps_map:
@@ -554,7 +597,7 @@ class WolfClient:
                                referer=self.home_referer()))
         if r.status_code != 200:
             raise WolfError(f'search HTTP {r.status_code}: {q}')
-        html = r.text or ''
+        html = self._decode_html(r)
         body_lower = html[:5000].lower()
         if 'just a moment' in body_lower or 'cdn-cgi/challenge' in body_lower:
             raise BlockedError(f'cf challenge on search: {q}')
@@ -597,7 +640,7 @@ class WolfClient:
                                referer=self.home_referer()))
         if r.status_code != 200:
             raise WolfError(f'browse HTTP {r.status_code}: /{path}')
-        html = r.text or ''
+        html = self._decode_html(r)
         body_lower = html[:5000].lower()
         if 'just a moment' in body_lower or 'cdn-cgi/challenge' in body_lower:
             raise BlockedError(f'cf challenge on browse: /{path}')
@@ -664,7 +707,7 @@ class WolfClient:
         if r.status_code != 200:
             raise WolfError(f'viewer HTTP {r.status_code}: '
                             f'{work_id}/{ep_url_id}')
-        html = r.text or ''
+        html = self._decode_html(r)
         body_lower = html[:5000].lower()
         if 'just a moment' in body_lower or 'cdn-cgi/challenge' in body_lower:
             raise BlockedError(f'cf challenge on viewer: {work_id}/{ep_url_id}')
@@ -778,7 +821,7 @@ class WolfClient:
         if r.status_code != 200:
             result['reason'] = f'HTTP {r.status_code} — 도메인 변경/만료 의심'
             return result
-        body_head = (r.text or '')[:8000].lower()
+        body_head = self._decode_html(r)[:8000].lower()
         if ('just a moment' in body_head
                 or 'cdn-cgi/challenge' in body_head
                 or ('cloudflare' in body_head and 'challenge' in body_head)):
@@ -799,7 +842,7 @@ class WolfClient:
             return False
         if r.status_code != 200:
             return False
-        body = (r.text or '')[:80000]
+        body = self._decode_html(r)[:80000]
         low = body.lower()
         if 'just a moment' in low or 'cdn-cgi/challenge' in low:
             return False
