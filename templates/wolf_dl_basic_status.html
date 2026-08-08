@@ -109,8 +109,12 @@ function applyAuto(a){
   $('#a_pgbar').css('width', pp + '%');
 }
 
+var STATUS_LABEL = {
+  'idle':'대기', 'analyzing':'분석 중', 'running':'다운로드 중',
+  'done':'완료', 'error':'에러', 'canceled':'취소됨'
+};
 function applyManual(m){
-  $('#m_status').text(m.status || '-');
+  $('#m_status').text(STATUS_LABEL[m.status] || m.status || '-');
   $('#m_message').text(m.message || '');
   var title = m.work_title || '-';
   $('#m_series').text(title);
@@ -121,10 +125,15 @@ function applyManual(m){
   $('#m_completed').text(m.completed || 0);
   $('#m_skipped').text(m.skipped || 0);
   $('#m_failed').text(m.failed || 0);
-  var p = pct(done, total);
-  $('#m_pbar').css('width', p + '%').text(p + '%');
-  if(m.status === 'running') $('#m_pbar').addClass('progress-bar-striped progress-bar-animated bg-success');
-  else $('#m_pbar').removeClass('progress-bar-animated');
+  if(m.status === 'analyzing'){
+    $('#m_pbar').css('width', '100%').text('분석 중…')
+                .addClass('progress-bar-striped progress-bar-animated bg-success');
+  } else {
+    var p = pct(done, total);
+    $('#m_pbar').css('width', p + '%').text(p + '%');
+    if(m.status === 'running') $('#m_pbar').addClass('progress-bar-striped progress-bar-animated bg-success');
+    else $('#m_pbar').removeClass('progress-bar-animated');
+  }
   var idx = m.current_index;
   var eps = m.episodes || [];
   if(idx >= 0 && idx < eps.length){

@@ -153,14 +153,12 @@ $('body').on('click', '.js-pg', function(e){ e.preventDefault(); doBrowse(parseI
 $('body').on('click', '.js-dl', function(e){
   e.preventDefault();
   var id = String($(this).data('id'));
-  $.notify('분석 + 다운로드 시작...', {className: 'info'});
+  $.notify('분석 시작…', {className: 'info'});
   $.post('/' + package_name + '/ajax/basic/command',
          {command: 'mrun', arg1: id, url: id},
          function(data){
     if (data && data.ret === 'success'){
-      $.notify('작품: ' + (data.work_title || '?')
-               + ' / 다운로드 가능 ' + data.will_download + '/' + data.total
-               + ' — 진행 상황 탭에서 확인',
+      $.notify((data.msg || '시작됨') + ' — 진행 상황 탭에서 확인',
                {className: 'success'});
     } else {
       $.notify((data && data.msg) || '실행 실패', {className: 'error'});

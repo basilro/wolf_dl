@@ -88,8 +88,13 @@ def _build_client() -> WolfClient:
                       flaresolverr_url=fs_url)
 
 
-def analyze(url_or_id: str, default_kind: str = DEFAULT_KIND) -> Dict[str, Any]:
-    """URL → 작품 메타 + 회차 목록. 다운로드는 안 함."""
+def analyze(url_or_id: str, default_kind: str = DEFAULT_KIND,
+            keep_status: bool = False) -> Dict[str, Any]:
+    """URL → 작품 메타 + 회차 목록. 다운로드는 안 함.
+
+    keep_status=True 면 현재 status('analyzing')를 건드리지 않고 필드만 채운다
+    (비동기 흐름에서 분석→다운로드로 넘어갈 때 status 가 잠깐 idle 로 튀어
+    프론트 폴링 타이머가 꺼지는 것을 방지)."""
     P.logger.info('[manual] analyze BEGIN url=%r', url_or_id)
     parsed = WolfClient.extract_work_id(url_or_id)
     if not parsed:
@@ -129,13 +134,18 @@ def analyze(url_or_id: str, default_kind: str = DEFAULT_KIND) -> Dict[str, Any]:
     episodes.sort(key=lambda e: e['no'])
     will_download = len(episodes)
 
-    _reset_state()
-    _set(status='idle',
-         message=(f'분석 완료 — 전체 {len(all_eps)}개 중 '
-                  f'다운로드 가능 {will_download}개'),
-         kind=kind, work_id=work_id, work_title=work_title,
-         episodes=episodes, total_to_download=will_download,
-         _meta=meta)
+    msg = (f'분석 완료 — 전체 {len(all_eps)}개 중 '
+           f'다운로드 가능 {will_download}개')
+    if keep_status:
+        # 'analyzing' 유지 — status 는 호출자(_analyze_and_run)가 관리
+        _set(message=msg, kind=kind, work_id=work_id, work_title=work_title,
+             episodes=episodes, total_to_download=will_download, _meta=meta,
+             current_index=-1, completed=0, skipped=0, failed=0)
+    else:
+        _reset_state()
+        _set(status='idle', message=msg,
+             kind=kind, work_id=work_id, work_title=work_title,
+             episodes=episodes, total_to_download=will_download, _meta=meta)
     P.logger.info('[manual] analyze END work=%r total=%d free=%d',
                   work_title, len(all_eps), will_download)
     return {
@@ -150,22 +160,56 @@ def analyze(url_or_id: str, default_kind: str = DEFAULT_KIND) -> Dict[str, Any]:
 
 def run_with_url(url_or_id: str,
                  default_kind: str = DEFAULT_KIND) -> Dict[str, Any]:
+    """분석 + 다운로드를 백그라운드 스레드에서 실행하고 즉시 반환.
+
+    이전엔 analyze()(회차 목록 전 페이지 순회, 최대 수백 초)를 요청 핸들러에서
+    동기로 돌려 AJAX 가 통째로 블로킹 → 화면이 멈춘 것처럼 보였다.
+    이제 분석부터 백그라운드로 넘기고 프론트는 mprogress 폴링으로 진행 표시."""
+    global _thread
     P.logger.info('[manual] run_with_url BEGIN url=%r', url_or_id)
     if is_running():
         return {'ret': 'fail', 'msg': '이미 실행 중'}
-    ar = analyze(url_or_id, default_kind=default_kind)
-    if ar.get('ret') != 'success':
-        return ar
-    sr = start()
-    return {
-        'ret': sr.get('ret', 'fail'),
-        'msg': sr.get('msg', ''),
-        'kind': ar.get('kind'), 'kind_label': ar.get('kind_label'),
-        'work_id': ar.get('work_id'),
-        'work_title': ar.get('work_title'),
-        'will_download': ar.get('will_download'),
-        'total': ar.get('total'),
-    }
+    if not (url_or_id or '').strip():
+        return {'ret': 'fail', 'msg': 'URL/ID 가 비어 있음'}
+    download_root = (P.ModelSetting.get('download_path') or '').strip()
+    if not download_root:
+        return {'ret': 'fail', 'msg': 'download_path 미설정'}
+
+    _reset_state()
+    _cancel_flag.clear()
+    _set(status='analyzing', message='작품 분석 중… (회차 목록 수집)',
+         started_at=datetime.now().isoformat(), finished_at=None)
+    _thread = threading.Thread(
+        target=_analyze_and_run,
+        args=(url_or_id, default_kind, download_root), daemon=True)
+    _thread.start()
+    return {'ret': 'success', 'msg': '분석 시작 — 진행 상황에서 확인',
+            'async': True}
+
+
+def _analyze_and_run(url_or_id: str, default_kind: str, download_root: str):
+    """백그라운드: analyze → (성공 시) 다운로드 루프."""
+    with F.app.app_context():
+        try:
+            ar = analyze(url_or_id, default_kind=default_kind, keep_status=True)
+        except Exception as e:
+            P.logger.error('[manual] analyze exception: %s', e)
+            P.logger.error(traceback.format_exc())
+            _set(status='error', finished_at=datetime.now().isoformat(),
+                 message=f'분석 에러: {e}')
+            return
+        if ar.get('ret') != 'success':
+            _set(status='error', finished_at=datetime.now().isoformat(),
+                 message=ar.get('msg') or '분석 실패')
+            return
+        if _cancel_flag.is_set():
+            _set(status='canceled', finished_at=datetime.now().isoformat(),
+                 message='취소됨')
+            return
+        _set(status='running', message='다운로드 시작',
+             started_at=datetime.now().isoformat(), finished_at=None,
+             current_index=-1, completed=0, skipped=0, failed=0)
+    _run(download_root)   # 자체 app_context
 
 
 def start() -> Dict[str, Any]:

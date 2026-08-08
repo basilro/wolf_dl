@@ -96,8 +96,12 @@ function renderEpisodes(eps, currentIdx){
   document.getElementById('m_episodes').innerHTML = html;
 }
 
+var STATUS_LABEL = {
+  'idle':'대기', 'analyzing':'분석 중', 'running':'다운로드 중',
+  'done':'완료', 'error':'에러', 'canceled':'취소됨'
+};
 function applyState(st){
-  document.getElementById('m_status').innerText = st.status || '-';
+  document.getElementById('m_status').innerText = STATUS_LABEL[st.status] || st.status || '-';
   document.getElementById('m_message').innerText = st.message || '';
   document.getElementById('m_series').innerText = st.work_title || '-';
   var total = st.total_to_download || 0;
@@ -109,10 +113,17 @@ function applyState(st){
   document.getElementById('m_failed').innerText = st.failed || 0;
   var pct = total > 0 ? Math.floor(done * 100 / Math.max(total, 1)) : 0;
   var bar = document.getElementById('m_progress_bar');
-  bar.style.width = pct + '%';
-  bar.innerText = pct + '%';
-  if (st.status === 'running') bar.classList.add('progress-bar-animated');
-  else bar.classList.remove('progress-bar-animated');
+  if (st.status === 'analyzing') {
+    // 회차 수 확정 전 — 인디터미닛 표시
+    bar.style.width = '100%';
+    bar.innerText = '분석 중…';
+    bar.classList.add('progress-bar-animated');
+  } else {
+    bar.style.width = pct + '%';
+    bar.innerText = pct + '%';
+    if (st.status === 'running') bar.classList.add('progress-bar-animated');
+    else bar.classList.remove('progress-bar-animated');
+  }
   renderEpisodes(st.episodes || [], st.current_index);
 
   if (st.status === 'running' || st.status === 'analyzing') {
@@ -216,18 +227,18 @@ $('body').on('click', '#manualRunBtn', function(e){
   e.preventDefault();
   var url = ($('#manual_url').val() || '').trim();
   if (!url) { $.notify('URL을 입력하세요', {className: 'warn'}); return; }
-  $.notify('분석 + 다운로드 시작...', {className: 'info'});
+  $.notify('분석 시작…', {className: 'info'});
+  // 분석·다운로드는 백그라운드 — 즉시 폴링 시작해서 진행 표시
   $.post('/' + package_name + '/ajax/basic/command',
          {command: 'mrun', arg1: url, url: url},
          function(data){
     if (data && data.ret === 'success'){
-      $.notify('작품: ' + (data.work_title || '?')
-               + ' / 다운로드 가능 ' + data.will_download + '/' + data.total,
-               {className: 'success'});
+      $.notify(data.msg || '시작됨', {className: 'success'});
     } else {
       $.notify((data && data.msg) || '실행 실패', {className: 'error'});
     }
     pollProgress();
+    if (!pollTimer) pollTimer = setInterval(pollProgress, 1500);
   }).fail(function(xhr){
     $.notify('서버 호출 실패: ' + xhr.status + ' ' + xhr.statusText, {className: 'error'});
   });
