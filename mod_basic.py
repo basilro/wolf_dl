@@ -210,6 +210,46 @@ class ModuleBasic(PluginModuleBase):
                                'count': len(results)}
                     except Exception as e:
                         ret = {'ret': 'fail', 'msg': str(e)}
+            elif command == 'mbrowse':
+                # 연재/완결 목록 + 요일·성인·장르·정렬 필터
+                from .client import WolfClient
+
+                def _f(key, default=''):
+                    v = None
+                    if req is not None:
+                        try:
+                            v = (req.form.get(key) or req.values.get(key))
+                        except Exception:
+                            v = None
+                    return (v if v is not None else default)
+
+                status = (arg1 or _f('status', 'ing')).strip() or 'ing'
+                t1 = _f('t1', '').strip()      # 요일
+                t2 = _f('t2', '').strip()      # 구분(일반/BL/성인)
+                t3 = _f('t3', '').strip()      # 장르
+                o = (_f('o', 'n').strip() or 'n')  # 정렬
+                try:
+                    pg = int((arg2 or _f('pg', '1')).strip() or '1')
+                except Exception:
+                    pg = 1
+                proxy_url = WolfClient.resolve_proxy(
+                    P.ModelSetting.get('use_proxy'),
+                    P.ModelSetting.get('proxy_url'))
+                base = (P.ModelSetting.get('base_url') or '').strip() or None
+                cookies = (P.ModelSetting.get('cookies') or '').strip() or None
+                fs_url = (P.ModelSetting.get('flaresolverr_url') or '').strip() or None
+                try:
+                    cli = WolfClient(base_url=base, logger=P.logger,
+                                     proxy_url=proxy_url, cookies=cookies,
+                                     flaresolverr_url=fs_url)
+                    data = cli.browse(status=status, t1=t1, t2=t2, t3=t3,
+                                      o=o, pg=pg)
+                    ret = {'ret': 'success',
+                           'results': data['cards'], 'count': len(data['cards']),
+                           'last_page': data['last_page'], 'page': data['page'],
+                           'status': data['status']}
+                except Exception as e:
+                    ret = {'ret': 'fail', 'msg': str(e)}
             elif command == 'add_title':
                 # 수동 다운로드 → 자동 등록 작품 목록에 추가
                 tok = (arg1 or '').strip()

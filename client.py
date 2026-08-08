@@ -560,6 +560,53 @@ class WolfClient:
             raise BlockedError(f'cf challenge on search: {q}')
         return self._parse_search_cards(html)
 
+    # 목록 필터 상수 (UI/검증 공용)
+    LIST_STATUS = {'ing': '연재', 'end': '완결'}
+    WEEKDAY = {'': '전체', '1': '월', '2': '화', '3': '수', '4': '목',
+               '5': '금', '6': '토', '7': '일', '10': '기타'}
+    RATING = {'': '전체', '1': '일반', '2': 'BL', '3': '성인'}
+    SORT = {'n': '최신순', 'r': '신작순', 'f': '인기순'}
+    GENRES = ['드라마', '판타지', '액션', '로맨스', '일상', '개그', '미스터리',
+              '순정', '스포츠', '스릴러', '무협', '학원', '공포', '스토리']
+
+    def browse(self, status: str = 'ing', t1: str = '', t2: str = '',
+               t3: str = '', o: str = 'n', pg: int = 1) -> Dict[str, Any]:
+        """연재(`/ing`)·완결(`/end`) 목록 + 필터 조회.
+
+        - status: 'ing'(연재) | 'end'(완결)
+        - t1: 요일 ('' 전체, '1'~'7' 월~일, '10' 기타) — 완결엔 보통 무의미
+        - t2: 구분 ('' 전체, '1' 일반, '2' BL, '3' 성인)
+        - t3: 장르명 (EUC-KR 로 인코딩됨. '' 전체)
+        - o : 정렬 ('n' 최신, 'r' 신작, 'f' 인기)
+        - pg: 페이지
+
+        반환: {'cards': [...], 'last_page': int, 'page': int, 'status': str}
+        """
+        from urllib.parse import quote
+        path = 'end' if str(status) == 'end' else 'ing'
+        t3 = (t3 or '').strip()
+        try:
+            t3enc = quote(t3, encoding='euc-kr') if t3 else ''
+        except Exception:
+            t3enc = quote(t3) if t3 else ''
+        o = o if o in self.SORT else 'n'
+        url = (f'{self.base_url}/{path}?t1={t1}&t2={t2}&t3={t3enc}'
+               f'&o={o}&pg={int(pg)}')
+        r = self._sess.get(url, timeout=20,
+                           headers=self._html_headers(
+                               referer=self.home_referer()))
+        if r.status_code != 200:
+            raise WolfError(f'browse HTTP {r.status_code}: /{path}')
+        html = r.text or ''
+        body_lower = html[:5000].lower()
+        if 'just a moment' in body_lower or 'cdn-cgi/challenge' in body_lower:
+            raise BlockedError(f'cf challenge on browse: /{path}')
+        return {
+            'cards': self._parse_search_cards(html),
+            'last_page': self._detect_last_page(html),
+            'page': int(pg), 'status': path,
+        }
+
     @staticmethod
     def _parse_search_cards(html: str) -> List[Dict[str, Any]]:
         """검색/목록 그리드의 `<a class="t-card">` 카드 파싱."""
@@ -591,10 +638,12 @@ class WolfClient:
             if m:
                 last_ep = html_lib.unescape(m.group(1)).strip()
             completed = 'badge-end' in block
+            adult = 'badge-19' in block
             out.append({
                 'work_id': work_id, 'title': title or f'만화_{work_id}',
                 'thumb': thumb, 'genres': genres,
                 'last_episode': last_ep, 'completed': completed,
+                'adult': adult,
             })
         return out
 

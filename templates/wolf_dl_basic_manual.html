@@ -2,6 +2,64 @@
 {% block content %}
 
 <div>
+  <!-- ── 작품 목록 (연재/완결 + 필터) ── -->
+  <div class="container-fluid" style="margin-top:6px;">
+    <label><strong>작품 목록</strong></label>
+    <div class="form-row align-items-end" style="gap:8px 0;">
+      <div class="col-auto">
+        <div class="btn-group" role="group">
+          <button id="tabIng" type="button" class="btn btn-primary btn-sm">연재</button>
+          <button id="tabEnd" type="button" class="btn btn-outline-primary btn-sm">완결</button>
+        </div>
+      </div>
+      <div class="col-auto">
+        <select id="f_t1" class="form-control form-control-sm" title="요일">
+          <option value="">요일-전체</option>
+          <option value="1">월</option><option value="2">화</option>
+          <option value="3">수</option><option value="4">목</option>
+          <option value="5">금</option><option value="6">토</option>
+          <option value="7">일</option><option value="10">기타</option>
+        </select>
+      </div>
+      <div class="col-auto">
+        <select id="f_t2" class="form-control form-control-sm" title="구분">
+          <option value="">구분-전체</option>
+          <option value="1">일반</option>
+          <option value="2">BL</option>
+          <option value="3">성인</option>
+        </select>
+      </div>
+      <div class="col-auto">
+        <select id="f_t3" class="form-control form-control-sm" title="장르">
+          <option value="">장르-전체</option>
+          <option>드라마</option><option>판타지</option><option>액션</option>
+          <option>로맨스</option><option>일상</option><option>개그</option>
+          <option>미스터리</option><option>순정</option><option>스포츠</option>
+          <option>스릴러</option><option>무협</option><option>학원</option>
+          <option>공포</option><option>스토리</option>
+        </select>
+      </div>
+      <div class="col-auto">
+        <select id="f_o" class="form-control form-control-sm" title="정렬">
+          <option value="n">최신순</option>
+          <option value="r">신작순</option>
+          <option value="f">인기순</option>
+        </select>
+      </div>
+      <div class="col-auto">
+        <button id="browseBtn" class="btn btn-primary btn-sm" type="button">목록 불러오기</button>
+      </div>
+    </div>
+    <small class="form-text text-muted">
+      연재/완결 목록을 필터로 조회. 요일은 연재 목록에서만 유효.
+      결과에서 "다운로드" 또는 "목록추가" 선택.
+    </small>
+    <div id="browse_results" class="row"></div>
+    <div id="browse_pager" style="text-align:center; margin:8px 0;"></div>
+  </div>
+
+  <hr style="margin:16px 0;"/>
+
   <!-- ── 제목 검색 ── -->
   <div class="container-fluid" style="margin-top:6px;">
     <div class="form-group">
@@ -130,17 +188,19 @@ function pollProgress(){
   });
 }
 
-// ── 검색 ──
-function renderSearchResults(results){
-  var box = document.getElementById('search_results');
+// ── 카드 렌더 (검색·목록 공용) ──
+function renderCards(results, boxId, emptyMsg){
+  var box = document.getElementById(boxId);
   if (!results || !results.length){
-    box.innerHTML = '<div class="col-12"><small style="color:#999;">검색 결과 없음</small></div>';
+    box.innerHTML = '<div class="col-12"><small style="color:#999;">' + (emptyMsg || '결과 없음') + '</small></div>';
     return;
   }
   var html = '';
   for (var i = 0; i < results.length; i++){
     var r = results[i];
-    var badge = r.completed ? ' <span class="badge badge-secondary">완결</span>' : '';
+    var badge = '';
+    if (r.completed) badge += ' <span class="badge badge-secondary">완결</span>';
+    if (r.adult)     badge += ' <span class="badge badge-danger">19</span>';
     html += '<div class="col-md-6" style="padding:6px;">';
     html += '  <div style="border:1px solid #ddd; border-radius:6px; padding:8px; display:flex; gap:8px;">';
     if (r.thumb){
@@ -160,6 +220,58 @@ function renderSearchResults(results){
   }
   box.innerHTML = html;
 }
+function renderSearchResults(results){
+  renderCards(results, 'search_results', '검색 결과 없음');
+}
+
+// ── 목록 (연재/완결 + 필터) ──
+var browseStatus = 'ing';
+function doBrowse(pg){
+  var payload = {
+    command: 'mbrowse',
+    arg1: browseStatus, arg2: String(pg || 1),
+    status: browseStatus, pg: String(pg || 1),
+    t1: $('#f_t1').val() || '', t2: $('#f_t2').val() || '',
+    t3: $('#f_t3').val() || '', o: $('#f_o').val() || 'n'
+  };
+  $('#browse_results').html('<div class="col-12"><small>불러오는 중...</small></div>');
+  $('#browse_pager').html('');
+  $.post('/' + package_name + '/ajax/basic/command', payload, function(data){
+    if (data && data.ret === 'success'){
+      renderCards(data.results, 'browse_results', '목록이 비어 있음');
+      renderPager(data.page, data.last_page);
+    } else {
+      $('#browse_results').html('');
+      $.notify((data && data.msg) || '목록 조회 실패', {className: 'error'});
+    }
+  }).fail(function(xhr){
+    $.notify('서버 호출 실패: ' + xhr.status, {className: 'error'});
+  });
+}
+function renderPager(page, lastPage){
+  page = page || 1; lastPage = lastPage || 1;
+  if (lastPage <= 1){ $('#browse_pager').html(''); return; }
+  var h = '';
+  if (page > 1) h += '<button class="btn btn-sm btn-outline-secondary js-pg" data-pg="' + (page-1) + '">이전</button> ';
+  h += '<span style="margin:0 8px;">' + page + ' / ' + lastPage + '</span>';
+  if (page < lastPage) h += '<button class="btn btn-sm btn-outline-secondary js-pg" data-pg="' + (page+1) + '">다음</button>';
+  $('#browse_pager').html(h);
+}
+
+$('body').on('click', '#tabIng', function(){
+  browseStatus = 'ing';
+  $('#tabIng').removeClass('btn-outline-primary').addClass('btn-primary');
+  $('#tabEnd').removeClass('btn-primary').addClass('btn-outline-primary');
+  doBrowse(1);
+});
+$('body').on('click', '#tabEnd', function(){
+  browseStatus = 'end';
+  $('#tabEnd').removeClass('btn-outline-primary').addClass('btn-primary');
+  $('#tabIng').removeClass('btn-primary').addClass('btn-outline-primary');
+  doBrowse(1);
+});
+$('body').on('click', '#browseBtn', function(e){ e.preventDefault(); doBrowse(1); });
+$('body').on('click', '.js-pg', function(e){ e.preventDefault(); doBrowse(parseInt($(this).data('pg'), 10) || 1); });
 
 $(document).ready(function(){
   pollProgress();
