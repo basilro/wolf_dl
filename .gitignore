@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# IDE / Agent
+.idea/
+.vscode/
+.claude/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# PoC/탐색 산출물 (실수로 다시 생기면 커밋 방지)
+_poc/
+_probe/
+_dump_*/
+_session/
+*.har
+*.cef
+cookies*.json
+browser_cookies.json
+cookie.txt
+cookie*.txt
+
+# 리버스 엔지니어링 작업 결과물 (실수로 커밋 방지)
+/js/
+_sample*
+
+# 개인 설정 / 캐시
+config.local.*
+*.local
+
+# 로그
+*.log
+
+# Private DRM modules — public 배포는 .pyf (암호화) 만, 평문 .py 는 본인 dev 전용
+_novel_crypto.py
+
+# 설계/스펙 문서는 비공개 — public repo 에 안 올림
+docs/
+
+# 빌드 도구 — dev 전용
+tools/
+
+# HAR 캡처 (세션 쿠키 포함 — 절대 커밋 금지)
+har/
