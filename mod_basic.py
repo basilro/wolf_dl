@@ -81,6 +81,63 @@ class ModuleBasic(PluginModuleBase):
         return render_template(
             f'{P.package_name}_{self.name}_{sub}.html', arg=arg)
 
+    def process_ajax(self, command, req=None):
+        """jsonify 를 거치지 않는 raw 응답 경로 (/ajax/basic/<command>).
+
+        thumb: 목록/검색 카드 썸네일 프록시. CDN 이 Referer 핫링크 차단을
+        걸어둬서 브라우저가 직접 못 받으므로, 서버가 Referer 를 붙여 받아
+        스트리밍한다."""
+        try:
+            if command == 'thumb':
+                return self._serve_thumb(req)
+        except Exception as e:
+            P.logger.error('[process_ajax] %s 실패: %s', command, e)
+            P.logger.error(traceback.format_exc())
+        from flask import Response
+        return Response(status=404)
+
+    def _serve_thumb(self, req):
+        from flask import Response
+        url = ''
+        try:
+            url = (req.args.get('u') or req.values.get('u') or '').strip()
+        except Exception:
+            url = ''
+        if not url or not url.lower().startswith('http'):
+            return Response(status=400)
+        try:
+            cli = self._thumb_client()
+            data = cli.download_image(url, referer=cli.home_referer())
+        except Exception as e:
+            P.logger.warning('[thumb] 다운로드 실패 %s: %s', url[:120], e)
+            return Response(status=502)
+        low = url.lower()
+        ct = ('image/png' if low.endswith('.png') else
+              'image/gif' if low.endswith('.gif') else
+              'image/webp' if low.endswith('.webp') else 'image/jpeg')
+        resp = Response(data, mimetype=ct)
+        resp.headers['Cache-Control'] = 'public, max-age=86400'
+        return resp
+
+    def _thumb_client(self):
+        """썸네일용 WolfClient 캐시 (설정 바뀌면 재생성)."""
+        from .client import WolfClient
+        base = (P.ModelSetting.get('base_url') or '').strip() or None
+        cookies = (P.ModelSetting.get('cookies') or '').strip() or None
+        fs_url = (P.ModelSetting.get('flaresolverr_url') or '').strip() or None
+        proxy_url = WolfClient.resolve_proxy(
+            P.ModelSetting.get('use_proxy'),
+            P.ModelSetting.get('proxy_url'))
+        key = (base, cookies, fs_url, proxy_url)
+        cli = getattr(self, '_thumb_cli', None)
+        if cli is None or getattr(self, '_thumb_key', None) != key:
+            cli = WolfClient(base_url=base, logger=P.logger,
+                             proxy_url=proxy_url, cookies=cookies,
+                             flaresolverr_url=fs_url)
+            self._thumb_cli = cli
+            self._thumb_key = key
+        return cli
+
     def process_command(self, command, arg1=None, arg2=None, arg3=None, req=None):
         try:
             P.logger.info('[basic.process_command] cmd=%r arg1=%r arg2=%r arg3=%r',

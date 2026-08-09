@@ -83,7 +83,9 @@ function renderCards(results, boxId, emptyMsg){
     html += '<div class="col-md-6" style="padding:6px;">';
     html += '  <div style="border:1px solid #ddd; border-radius:6px; padding:8px; display:flex; gap:8px;">';
     if (r.thumb){
-      html += '    <img src="' + esc(r.thumb) + '" style="width:56px; height:76px; object-fit:cover; border-radius:4px;" onerror="this.style.display=\'none\'"/>';
+      // CDN 핫링크 차단 우회 — 서버 프록시 경유
+      var thumbUrl = '/' + package_name + '/ajax/basic/thumb?u=' + encodeURIComponent(r.thumb);
+      html += '    <img src="' + thumbUrl + '" style="width:56px; height:76px; object-fit:cover; border-radius:4px;" onerror="this.style.display=\'none\'"/>';
     }
     html += '    <div style="flex:1; min-width:0;">';
     html += '      <div style="font-weight:600;">' + esc(r.title) + badge + '</div>';
