@@ -24,14 +24,14 @@
 
   <!-- ── URL/ID 직접 입력 ── -->
   {{ macros.setting_input_text_and_buttons('manual_url', '늑대닷컴 작품 URL / ID',
-      [['manualRunBtn',    '시작'],
-       ['manualAddBtn',    '목록추가'],
-       ['manualCancelBtn', '취소']],
+      [['manualAnalyzeBtn', '분석'],
+       ['manualAddBtn',     '목록추가'],
+       ['manualCancelBtn',  '취소']],
       value='',
       desc=['예) https://wfwf436.com/list?toon=4461',
-            '예) https://wfwf436.com/view?toon=4461&num=211  (회차 URL 도 작품 단위로 다운)',
+            '예) https://wfwf436.com/view?toon=4461&num=211  (회차 URL 도 작품 단위로 인식)',
             '예) 4461  (toon 번호만 입력해도 됨)',
-            '"시작": 해당 작품의 모든 회차를 즉시 수동 다운로드.',
+            '"분석": 회차 목록을 불러온 뒤 아래에서 받을 회차를 선택해 다운로드.',
             '"목록추가": 자동 스케줄 다운로드 대상(설정 → 작품 목록)에 등록.']) }}
 
   <div class="container-fluid" style="margin-top:10px;">
@@ -52,10 +52,28 @@
     </div>
   </div>
 
+  <!-- ── 회차 선택 컨트롤 ── -->
+  <div class="container-fluid" id="sel_controls" style="margin-top:10px; display:none;">
+    <div class="row align-items-center" style="padding:6px 0;">
+      <div class="col-auto">
+        <label style="margin:0;"><input type="checkbox" id="chkAll"/> 전체선택</label>
+      </div>
+      <div class="col-auto">
+        <button id="selIncompleteBtn" class="btn btn-sm btn-outline-secondary" type="button">미완료만</button>
+        <button id="selInvertBtn" class="btn btn-sm btn-outline-secondary" type="button">선택반전</button>
+      </div>
+      <div class="col-auto"><span style="color:#666;">선택 <strong id="selCount">0</strong> / <span id="selTotal">0</span>개</span></div>
+      <div class="col text-right">
+        <button id="dlSelectedBtn" class="btn btn-sm btn-primary" type="button">선택 회차 다운로드</button>
+      </div>
+    </div>
+  </div>
+
   {{ macros.m_hr_head_top() }}
   {{ macros.m_row_start('0') }}
+  <div class="col-sm-1" style="text-align:center;"><strong>선택</strong></div>
   <div class="col-sm-1" style="text-align:center;"><strong>#</strong></div>
-  <div class="col-sm-6"><strong>회차</strong></div>
+  <div class="col-sm-5"><strong>회차</strong></div>
   <div class="col-sm-2" style="text-align:center;"><strong>진행</strong></div>
   <div class="col-sm-3" style="text-align:center;"><strong>상태</strong></div>
   {{ macros.m_row_end() }}
@@ -79,26 +97,41 @@ function stateBadge(s){
   return '<span class="badge badge-' + v[0] + '">' + v[1] + '</span>';
 }
 
+var lockCheckboxes = false;   // 분석/다운로드 중엔 체크박스 잠금
 function renderEpisodes(eps, currentIdx){
   var html = '';
   for (var i = 0; i < eps.length; i++){
     var e = eps[i];
     var pages = (e.pages_total ? (e.pages_done + '/' + e.pages_total) : '-');
     var rowStyle = (i === currentIdx) ? ' style="background:#fff3cd; color:#212529;"' : '';
+    var checked = (e.selected !== false) ? ' checked' : '';
+    var dis = (lockCheckboxes || e.paid) ? ' disabled' : '';
     html += '<div class="row"' + rowStyle + ' style="padding:3px 0; border-bottom:1px solid #eee;">';
+    html += '<div class="col-sm-1" style="text-align:center;"><input type="checkbox" class="ep-chk" data-ep="'
+         + esc(e.ep_url_id) + '" data-state="' + esc(e.state) + '"' + checked + dis + '/></div>';
     html += '<div class="col-sm-1" style="text-align:center;">' + (e.no || '-') + '</div>';
-    html += '<div class="col-sm-6" style="word-break:break-all;"><small>' + esc(e.title) + '</small></div>';
+    html += '<div class="col-sm-5" style="word-break:break-all;"><small>' + esc(e.title) + '</small></div>';
     html += '<div class="col-sm-2" style="text-align:center;">' + pages + '</div>';
     html += '<div class="col-sm-3" style="text-align:center;">' + stateBadge(e.state)
          + (e.error ? '<br/><small style="color:#c00;">' + esc(e.error) + '</small>' : '') + '</div>';
     html += '</div>';
   }
   document.getElementById('m_episodes').innerHTML = html;
+  refreshSelCount();
+}
+
+function refreshSelCount(){
+  var boxes = document.querySelectorAll('#m_episodes .ep-chk');
+  var total = boxes.length, sel = 0;
+  for (var i = 0; i < boxes.length; i++){ if (boxes[i].checked) sel++; }
+  var c = document.getElementById('selCount'); if (c) c.innerText = sel;
+  var t = document.getElementById('selTotal'); if (t) t.innerText = total;
+  var all = document.getElementById('chkAll'); if (all) all.checked = (total > 0 && sel === total);
 }
 
 var STATUS_LABEL = {
-  'idle':'대기', 'analyzing':'분석 중', 'running':'다운로드 중',
-  'done':'완료', 'error':'에러', 'canceled':'취소됨'
+  'idle':'대기', 'analyzing':'분석 중', 'analyzed':'분석완료(선택 대기)',
+  'running':'다운로드 중', 'done':'완료', 'error':'에러', 'canceled':'취소됨'
 };
 function applyState(st){
   document.getElementById('m_status').innerText = STATUS_LABEL[st.status] || st.status || '-';
@@ -124,6 +157,14 @@ function applyState(st){
     if (st.status === 'running') bar.classList.add('progress-bar-animated');
     else bar.classList.remove('progress-bar-animated');
   }
+
+  // 회차 선택 컨트롤: 회차가 있을 때만 노출, 분석/다운로드 중엔 잠금
+  var hasEps = !!(st.episodes && st.episodes.length);
+  document.getElementById('sel_controls').style.display = hasEps ? '' : 'none';
+  lockCheckboxes = (st.status === 'running' || st.status === 'analyzing');
+  var dlBtn = document.getElementById('dlSelectedBtn');
+  if (dlBtn) dlBtn.disabled = lockCheckboxes;
+
   renderEpisodes(st.episodes || [], st.current_index);
 
   if (st.status === 'running' || st.status === 'analyzing') {
@@ -204,12 +245,12 @@ $('#search_query').on('keypress', function(e){
   if (e.which === 13){ e.preventDefault(); $('#searchBtn').click(); }
 });
 
-// 검색 결과 → 다운로드
+// 검색 결과 → 분석(→ 아래에서 회차 선택 후 다운로드)
 $('body').on('click', '.js-dl', function(e){
   e.preventDefault();
   var id = $(this).data('id');
   $('#manual_url').val(String(id));
-  $('#manualRunBtn').click();
+  $('#manualAnalyzeBtn').click();
 });
 // 검색 결과 → 목록추가
 $('body').on('click', '.js-add', function(e){
@@ -223,14 +264,55 @@ $('body').on('click', '.js-add', function(e){
   });
 });
 
-$('body').on('click', '#manualRunBtn', function(e){
+// 분석 (다운로드 X) — 완료되면 아래 목록에서 회차 선택
+$('body').on('click', '#manualAnalyzeBtn', function(e){
   e.preventDefault();
   var url = ($('#manual_url').val() || '').trim();
   if (!url) { $.notify('URL을 입력하세요', {className: 'warn'}); return; }
   $.notify('분석 시작…', {className: 'info'});
-  // 분석·다운로드는 백그라운드 — 즉시 폴링 시작해서 진행 표시
   $.post('/' + package_name + '/ajax/basic/command',
-         {command: 'mrun', arg1: url, url: url},
+         {command: 'manalyze', arg1: url, url: url},
+         function(data){
+    if (data && data.ret === 'success'){
+      $.notify(data.msg || '분석 시작', {className: 'success'});
+    } else {
+      $.notify((data && data.msg) || '분석 실패', {className: 'error'});
+    }
+    pollProgress();
+    if (!pollTimer) pollTimer = setInterval(pollProgress, 1500);
+  }).fail(function(xhr){
+    $.notify('서버 호출 실패: ' + xhr.status + ' ' + xhr.statusText, {className: 'error'});
+  });
+});
+
+// ── 회차 선택 컨트롤 ──
+$('body').on('change', '#chkAll', function(){
+  var on = this.checked;
+  $('#m_episodes .ep-chk:not(:disabled)').prop('checked', on);
+  refreshSelCount();
+});
+$('body').on('change', '.ep-chk', function(){ refreshSelCount(); });
+$('body').on('click', '#selIncompleteBtn', function(e){
+  e.preventDefault();
+  $('#m_episodes .ep-chk:not(:disabled)').each(function(){
+    this.checked = ($(this).attr('data-state') !== 'completed');
+  });
+  refreshSelCount();
+});
+$('body').on('click', '#selInvertBtn', function(e){
+  e.preventDefault();
+  $('#m_episodes .ep-chk:not(:disabled)').each(function(){ this.checked = !this.checked; });
+  refreshSelCount();
+});
+// 선택 회차 다운로드
+$('body').on('click', '#dlSelectedBtn', function(e){
+  e.preventDefault();
+  var ids = [];
+  $('#m_episodes .ep-chk:checked').each(function(){ ids.push($(this).attr('data-ep')); });
+  if (!ids.length){ $.notify('선택된 회차가 없습니다', {className: 'warn'}); return; }
+  $.notify(ids.length + '개 다운로드 시작…', {className: 'info'});
+  $.post('/' + package_name + '/ajax/basic/command',
+         {command: 'mrun_selected', arg1: ids.join(','), eps: ids.join(',')},
          function(data){
     if (data && data.ret === 'success'){
       $.notify(data.msg || '시작됨', {className: 'success'});
@@ -240,7 +322,7 @@ $('body').on('click', '#manualRunBtn', function(e){
     pollProgress();
     if (!pollTimer) pollTimer = setInterval(pollProgress, 1500);
   }).fail(function(xhr){
-    $.notify('서버 호출 실패: ' + xhr.status + ' ' + xhr.statusText, {className: 'error'});
+    $.notify('서버 호출 실패: ' + xhr.status, {className: 'error'});
   });
 });
 

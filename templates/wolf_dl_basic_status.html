@@ -110,8 +110,8 @@ function applyAuto(a){
 }
 
 var STATUS_LABEL = {
-  'idle':'대기', 'analyzing':'분석 중', 'running':'다운로드 중',
-  'done':'완료', 'error':'에러', 'canceled':'취소됨'
+  'idle':'대기', 'analyzing':'분석 중', 'analyzed':'분석완료(선택 대기)',
+  'running':'다운로드 중', 'done':'완료', 'error':'에러', 'canceled':'취소됨'
 };
 function applyManual(m){
   $('#m_status').text(STATUS_LABEL[m.status] || m.status || '-');

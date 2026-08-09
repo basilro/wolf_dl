@@ -281,6 +281,28 @@ class ModuleBasic(PluginModuleBase):
                     except Exception:
                         pass
                 ret = manual_worker.run_with_url(url)
+            elif command == 'manalyze':
+                # 분석만 (다운로드 X) — 회차 선택용
+                from . import manual_worker
+                url = (arg1 or '').strip()
+                if not url and req is not None:
+                    try:
+                        url = (req.form.get('url') or req.values.get('url')
+                               or req.args.get('url') or '').strip()
+                    except Exception:
+                        pass
+                ret = manual_worker.analyze_async(url)
+            elif command == 'mrun_selected':
+                # 선택된 회차만 다운로드 (eps = 콤마구분 ep_url_id)
+                from . import manual_worker
+                eps = (arg1 or '')
+                if not eps and req is not None:
+                    try:
+                        eps = (req.form.get('eps') or req.values.get('eps')
+                               or '')
+                    except Exception:
+                        eps = ''
+                ret = manual_worker.run_selected(eps)
             elif command == 'mcancel':
                 from . import manual_worker
                 manual_worker.cancel()

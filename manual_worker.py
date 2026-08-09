@@ -124,6 +124,7 @@ def analyze(url_or_id: str, default_kind: str = DEFAULT_KIND,
             'ep_url_id': ep.get('ep_url_id') or '',
             'paid': bool(ep.get('paid')),
             'state': 'pending',
+            'selected': True,      # 분석 직후 기본 전체선택 (UI 에서 조정)
             'pages_done': 0,
             'pages_total': 0,
             'save_dir': '',
@@ -134,8 +135,23 @@ def analyze(url_or_id: str, default_kind: str = DEFAULT_KIND,
     episodes.sort(key=lambda e: e['no'])
     will_download = len(episodes)
 
-    msg = (f'분석 완료 — 전체 {len(all_eps)}개 중 '
-           f'다운로드 가능 {will_download}개')
+    # 이미 완료된 회차는 DB 로 표시 → 기본 선택에서 제외
+    try:
+        done_ids = set(
+            row[0] for row in db.session.query(ModelWolfItem.ep_url_id)
+            .filter_by(work_kind=kind, work_id=work_id,
+                       status='completed').all())
+    except Exception as e:
+        P.logger.warning('[manual] 완료회차 조회 실패: %s', e)
+        done_ids = set()
+    for e in episodes:
+        if e['ep_url_id'] in done_ids:
+            e['state'] = 'completed'
+            e['selected'] = False
+    not_done = sum(1 for e in episodes if e['selected'])
+
+    msg = (f'분석 완료 — 전체 {len(all_eps)}개 / 무료 {will_download}개 '
+           f'(미완료 {not_done}개)')
     if keep_status:
         # 'analyzing' 유지 — status 는 호출자(_analyze_and_run)가 관리
         _set(message=msg, kind=kind, work_id=work_id, work_title=work_title,
@@ -154,6 +170,7 @@ def analyze(url_or_id: str, default_kind: str = DEFAULT_KIND,
         'work_id': work_id, 'work_title': work_title,
         'episodes': episodes,
         'will_download': will_download,
+        'not_done': not_done,
         'total': len(all_eps),
     }
 
@@ -212,6 +229,87 @@ def _analyze_and_run(url_or_id: str, default_kind: str, download_root: str):
     _run(download_root)   # 자체 app_context
 
 
+# ───────────────────── 분석 → 회차선택 → 선택 다운로드 ─────────────────────
+
+def analyze_async(url_or_id: str,
+                  default_kind: str = DEFAULT_KIND) -> Dict[str, Any]:
+    """분석만 백그라운드로 실행 (다운로드 안 함). 완료되면 status='analyzed'.
+
+    프론트는 폴링으로 회차 목록을 받아 체크박스로 표시하고, 사용자가 고른
+    회차를 run_selected 로 넘긴다."""
+    global _thread
+    P.logger.info('[manual] analyze_async BEGIN url=%r', url_or_id)
+    if is_running():
+        return {'ret': 'fail', 'msg': '이미 실행 중'}
+    if not (url_or_id or '').strip():
+        return {'ret': 'fail', 'msg': 'URL/ID 가 비어 있음'}
+    _reset_state()
+    _cancel_flag.clear()
+    _set(status='analyzing', message='작품 분석 중… (회차 목록 수집)',
+         started_at=datetime.now().isoformat(), finished_at=None)
+    _thread = threading.Thread(target=_analyze_thread,
+                               args=(url_or_id, default_kind), daemon=True)
+    _thread.start()
+    return {'ret': 'success', 'msg': '분석 시작', 'async': True}
+
+
+def _analyze_thread(url_or_id: str, default_kind: str):
+    with F.app.app_context():
+        try:
+            ar = analyze(url_or_id, default_kind=default_kind, keep_status=True)
+        except Exception as e:
+            P.logger.error('[manual] analyze exception: %s', e)
+            P.logger.error(traceback.format_exc())
+            _set(status='error', finished_at=datetime.now().isoformat(),
+                 message=f'분석 에러: {e}')
+            return
+        if ar.get('ret') != 'success':
+            _set(status='error', finished_at=datetime.now().isoformat(),
+                 message=ar.get('msg') or '분석 실패')
+            return
+        nd = ar.get('not_done') or 0
+        wd = ar.get('will_download') or 0
+        _set(status='analyzed', finished_at=datetime.now().isoformat(),
+             message=(f'분석 완료 — 무료 {wd}개 중 미완료 {nd}개 기본 선택. '
+                      f'받을 회차를 고르세요.'))
+
+
+def run_selected(ep_url_ids, default_kind: str = DEFAULT_KIND) -> Dict[str, Any]:
+    """분석된 회차 중 선택된 것만 다운로드.
+
+    ep_url_ids: 콤마구분 문자열 또는 리스트 (선택된 회차의 ep_url_id)."""
+    global _thread
+    if is_running():
+        return {'ret': 'fail', 'msg': '이미 실행 중'}
+    if isinstance(ep_url_ids, str):
+        ids = [x.strip() for x in ep_url_ids.split(',') if x.strip()]
+    else:
+        ids = [str(x).strip() for x in (ep_url_ids or []) if str(x).strip()]
+    with _state_lock:
+        if not _state['work_id'] or not _state['episodes']:
+            return {'ret': 'fail', 'msg': '먼저 작품을 분석하세요'}
+        idset = set(ids)
+        sel = 0
+        for ep in _state['episodes']:
+            chosen = ep.get('ep_url_id') in idset
+            ep['selected'] = chosen
+            if chosen:
+                sel += 1
+        _state['total_to_download'] = sel
+    if sel == 0:
+        return {'ret': 'fail', 'msg': '선택된 회차가 없음'}
+    download_root = (P.ModelSetting.get('download_path') or '').strip()
+    if not download_root:
+        return {'ret': 'fail', 'msg': 'download_path 미설정'}
+    _cancel_flag.clear()
+    _set(status='running', message=f'선택 {sel}개 다운로드 시작',
+         started_at=datetime.now().isoformat(), finished_at=None,
+         current_index=-1, completed=0, skipped=0, failed=0)
+    _thread = threading.Thread(target=_run, args=(download_root,), daemon=True)
+    _thread.start()
+    return {'ret': 'success', 'msg': f'{sel}개 다운로드 시작', 'selected': sel}
+
+
 def start() -> Dict[str, Any]:
     global _thread
     if is_running():
@@ -256,6 +354,8 @@ def _run(download_root: str):
                          finished_at=datetime.now().isoformat(),
                          message='취소됨')
                     return
+                if not ep.get('selected', True):
+                    continue   # 선택 안 된 회차는 건너뜀
                 _set(current_index=idx)
                 P.logger.info('[manual] [%d/%d] %s (no=%s ep=%s)',
                               idx + 1, len(episodes),
