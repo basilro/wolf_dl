@@ -301,12 +301,13 @@ class Worker:
         # 등록 작품 목록 (만화 단일)
         self.items: List[str] = _split_items(self.cfg.get('titles') or '')
 
+        # max_per_run: 작품당 1회 실행 최대 다운 회차. 0(또는 음수) = 전체.
         try:
             self.max_per_run = int(self.cfg.get('max_per_run') or '5')
         except Exception:
             self.max_per_run = 5
-        if self.max_per_run < 1:
-            self.max_per_run = 1
+        if self.max_per_run < 0:
+            self.max_per_run = 0
 
         self.use_compress = (self.cfg.get('use_compress') or 'False') == 'True'
         self.proxy_url = WolfClient.resolve_proxy(
@@ -513,10 +514,14 @@ class Worker:
         if not pending:
             return 'skipped'
 
-        # 최신 회차 우선 (높은 번호부터 limit 만큼) → 받을 땐 오름차순
-        pending.sort(key=lambda e: e['no'], reverse=True)
-        targets = pending[:self.max_per_run]
-        targets.sort(key=lambda e: e['no'])
+        # 받을 회차 선택 — max_per_run<=0 이면 전체(오름차순)
+        if self.max_per_run <= 0:
+            targets = sorted(pending, key=lambda e: e['no'])
+        else:
+            # 최신 회차 우선(높은 번호부터 limit 만큼) → 받을 땐 오름차순
+            pending.sort(key=lambda e: e['no'], reverse=True)
+            targets = pending[:self.max_per_run]
+            targets.sort(key=lambda e: e['no'])
 
         downloaded = 0
         _auto_set(current_phase='downloading')

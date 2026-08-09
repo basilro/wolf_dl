@@ -37,8 +37,9 @@
 
         {{ macros.setting_input_text('max_per_run', '작품당 1회 실행 최대 다운 회차',
             value=arg['max_per_run'],
-            desc=['스케줄 1회당 작품별로 최대 N개 신규 회차만 받음.',
-                  '값이 크면 첫 실행에서 모든 회차를 다 받음 — 트래픽 부담 ↑',
+            desc=['스케줄 1회당 작품별로 최대 N개 신규 회차(최신순)만 받음.',
+                  '<strong>0 = 전체</strong> (미수신 회차 모두 받음 — 완결작 배치용).',
+                  '값이 크거나 0이면 첫 실행에서 모든 회차를 받음 — 트래픽 부담 ↑',
                   '기본: 5']) }}
 
         {{ macros.setting_checkbox('use_compress', '회차 폴더 ZIP 압축',
@@ -175,7 +176,7 @@
                 <li><code>info.xml</code> / <code>cover.jpg</code> 자동 생성 (없으면)</li>
               </ul>
             </li>
-            <li>미수신 회차 중 <strong>최신 N개</strong> (<code>max_per_run</code>) 만 다운로드</li>
+            <li>미수신 회차 중 <strong>최신 N개</strong> (<code>max_per_run</code>) 만 다운로드 (<code>0</code>=전체)</li>
             <li>회차 뷰어 (<code>{base_url}/view?toon={workId}&num={num}</code>) 의 본문 이미지(<code>img[data-src]</code>) 다운로드</li>
             <li>회차당 이미지 → <code>{경로}/manhwa/{작품}/{NNNN_회차}/{001.jpg ...}</code></li>
             <li>DB(<code>wolf_dl_item</code>) 에 회차별 이력 기록 — 같은 회차 재다운로드 안 함</li>
@@ -206,7 +207,7 @@
               <tr><td>늑대닷컴 도메인 (인증 탭)</td><td>현재 접속 가능한 도메인 입력. "도메인 확인" 으로 검증, "도메인 자동 갱신" 으로 다음 후보 자동 탐지.</td></tr>
               <tr><td>도메인 공지 채널 (인증 탭)</td><td>공식 텔레그램 공개 채널. 자동 갱신 시 최신 주소 fetch 에 사용.</td></tr>
               <tr><td>다운로드 경로</td><td><code>{경로}/manhwa/{작품}/{NNNN_회차}/{001.jpg ...}</code></td></tr>
-              <tr><td>1회 실행 최대 다운 회차</td><td>작품당 N개 (기본 5). 처음 등록 시 한꺼번에 다 받지 않도록.</td></tr>
+              <tr><td>1회 실행 최대 다운 회차</td><td>작품당 N개 (기본 5, <strong>0=전체</strong>). 처음 등록 시 한꺼번에 다 받지 않도록.</td></tr>
               <tr><td>회차 폴더 ZIP 압축</td><td>정상 완료 시 .zip 으로 묶고 원본 폴더 삭제</td></tr>
               <tr><td>알림 웹훅 (알림 탭)</td><td>Discord/Slack 웹훅 URL. 다운 완료 / 도메인·쿠키 만료 등 이벤트 발송.</td></tr>
             </tbody>
