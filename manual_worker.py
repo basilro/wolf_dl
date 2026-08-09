@@ -9,6 +9,7 @@ from typing import Optional, Dict, Any, List
 from .client import (WolfClient, WolfError, NotReadableError,
                      BlockedError, KIND_LABEL, DEFAULT_KIND)
 from .model import ModelWolfItem
+from .notify import send_webhook, build_download_summary
 from .setup import *  # P, db, logger
 from . import worker as _wkr  # ensure_title_metadata / compress_episode_folder
 
@@ -38,6 +39,42 @@ _state: Dict[str, Any] = {
 }
 _cancel_flag = threading.Event()
 _thread: Optional[threading.Thread] = None
+
+# 이번 실행에서 실제로 새로 받은 회차 (완료 알림용)
+_completed_items: List[Dict[str, Any]] = []
+
+
+def _reset_completed():
+    with _state_lock:
+        _completed_items.clear()
+
+
+def _record_completed(series_title: str, episode_title: str, episode_no):
+    with _state_lock:
+        _completed_items.append({
+            'series_title': series_title,
+            'episode_title': episode_title,
+            'episode_no': episode_no,
+        })
+
+
+def _send_manual_notify():
+    """받은 게 있으면 완료 요약 웹훅 발송 (자동과 동일한 설정/포맷)."""
+    with _state_lock:
+        items = list(_completed_items)
+    if not items:
+        return
+    url = (P.ModelSetting.get('notify_webhook_download') or '').strip()
+    if not url:
+        return
+    try:
+        msg = build_download_summary(items)
+        if msg:
+            ok = send_webhook(url, msg)
+            P.logger.info('[manual] 다운 요약 알림: %s (%d건)',
+                          'OK' if ok else 'FAIL', len(items))
+    except Exception as e:
+        P.logger.warning('[manual] 요약 알림 예외: %s', e)
 
 
 def get_state() -> Dict[str, Any]:
@@ -333,6 +370,7 @@ def start() -> Dict[str, Any]:
 
 def _run(download_root: str):
     with F.app.app_context():
+        _reset_completed()
         try:
             cli = _build_client()
             with _state_lock:
@@ -381,6 +419,9 @@ def _run(download_root: str):
             P.logger.error(traceback.format_exc())
             _set(status='error', finished_at=datetime.now().isoformat(),
                  message=f'에러: {e}')
+        finally:
+            # done/취소/에러 어느 경우든 받은 게 있으면 요약 알림
+            _send_manual_notify()
 
 
 def _ep_update(idx: int, **kw):
@@ -482,6 +523,7 @@ def _download_image_one(cli, rec, kind, work_id, work_title, idx,
         rec.status = 'completed'
         _ep_update(idx, state='completed')
         db.session.commit()
+        _record_completed(work_title, ep_title, no)   # 완료 알림용
         if (P.ModelSetting.get('use_compress') or 'False') == 'True':
             zip_path = _wkr.compress_episode_folder(save_dir)
             if zip_path:

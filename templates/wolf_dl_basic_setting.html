@@ -145,8 +145,8 @@
         {{ macros.setting_input_text_and_buttons('notify_webhook_download', '다운 완료 알림 URL',
             [['notifyTestDownloadBtn', '테스트']],
             value=arg['notify_webhook_download'],
-            desc=['회차를 받았을 때 요약 메시지 발송. 받은 게 없으면 발송 안 함.',
-                  '비우면 알림 OFF.']) }}
+            desc=['회차를 받았을 때 요약 메시지 발송 (자동·수동 다운로드 공통).',
+                  '받은 게 없으면 발송 안 함. 비우면 알림 OFF.']) }}
 
         {{ macros.setting_input_text_and_buttons('notify_webhook_alert', '도메인/쿠키 만료 알림 URL',
             [['notifyTestAlertBtn', '테스트']],
@@ -185,7 +185,7 @@
           <p><strong>옵션</strong></p>
           <ul>
             <li>회차 폴더 ZIP 압축</li>
-            <li>다운 완료 시 Discord/Slack 웹훅 알림</li>
+            <li>다운 완료 시 Discord/Slack 웹훅 알림 (자동·수동 공통)</li>
             <li>도메인 / 쿠키 만료 시 알림 웹훅 (인증 탭)</li>
             <li>도메인 자동 갱신 — 호스트 끝 숫자 +1~+5 증가 후, 실패 시 텔레그램 공지 채널 파싱</li>
           </ul>
