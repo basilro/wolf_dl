@@ -150,6 +150,8 @@ class ModuleBasic(PluginModuleBase):
                 ret = self.do_action()
             elif command == 'sync_metadata':
                 ret = self.do_action_sync_metadata()
+            elif command == 'reconcile_disk':
+                ret = self.do_action_reconcile_disk()
             elif command == 'compress_all':
                 ret = self.do_action_compress_all()
             elif command == 'resolve_base':
@@ -454,6 +456,25 @@ class ModuleBasic(PluginModuleBase):
         threading.Thread(target=_bg, daemon=True).start()
         return {'ret': 'success',
                 'msg': '메타 동기화 시작됨 — "진행 상황" 메뉴에서 확인'}
+
+    def do_action_reconcile_disk(self):
+        """디스크 스캔 → DB 반영 (백그라운드). 등록된 목록의 각 작품을 분석해
+        이미 받아둔 회차를 DB 에 completed 로 등록."""
+        from . import worker as auto_worker
+        if auto_worker.get_auto_state().get('status') == 'running':
+            return {'ret': 'fail', 'msg': '이미 자동 다운로드 실행 중'}
+
+        def _bg():
+            try:
+                with F.app.app_context():
+                    Worker().reconcile_disk_to_db()
+            except Exception as e:
+                P.logger.error('[basic] reconcile_disk Exception: %s', e)
+                P.logger.error(traceback.format_exc())
+
+        threading.Thread(target=_bg, daemon=True).start()
+        return {'ret': 'success',
+                'msg': '디스크 반영 시작됨 — "진행 상황" 메뉴에서 확인'}
 
     def do_action_compress_all(self):
         from . import worker as auto_worker

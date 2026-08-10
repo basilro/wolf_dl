@@ -18,6 +18,17 @@ from .setup import *  # P, db, logger
 
 _IMAGE_EXTS = ('.webp', '.jpg', '.jpeg', '.png', '.gif', '.bmp')
 
+
+def _count_images(folder: str) -> int:
+    """폴더 내 이미지 파일 개수 (없거나 접근 불가면 0)."""
+    try:
+        return sum(1 for f in os.listdir(folder)
+                   if f.lower().endswith(_IMAGE_EXTS)
+                   and os.path.isfile(os.path.join(folder, f)))
+    except Exception:
+        return 0
+
+
 # 외부 의존
 PIL_AVAILABLE = False
 try:
@@ -464,6 +475,115 @@ class Worker:
                            f"스킵 {summary['skipped']}, "
                            f"실패 {summary['failed']}"))
         return {'ret': 'success', **summary}
+
+    # ─────────────────── 디스크 스캔 → DB 반영 ───────────────────
+
+    def reconcile_disk_to_db(self) -> dict:
+        """등록된 목록의 각 작품을 분석 → 이미 디스크에 있는 회차를 DB 에
+        'completed' 로 등록. 실제 다운로드는 하지 않는다.
+
+        서비스 밖에서 받아둔 파일을 자동/수동이 다시 안 받도록 표시하는 용도.
+        폴더명엔 work_id/ep_url_id 가 없어서, 사이트 분석으로 얻은 회차 목록과
+        저장 규칙(title_dir_for + '{no:04d}_{제목}')로 폴더를 역매칭한다."""
+        _auto_reset()
+        _auto_set(status='running', started_at=datetime.now().isoformat(),
+                  message='디스크 스캔 → DB 반영 시작',
+                  titles_total=len(self.items), current_phase='reconcile')
+        if not self.download_root:
+            _auto_set(status='error', finished_at=datetime.now().isoformat(),
+                      message='download_path 미설정')
+            return {'ret': 'fail', 'reason': 'no_download_path'}
+        if not self.items:
+            _auto_set(status='error', finished_at=datetime.now().isoformat(),
+                      message='등록된 작품 없음')
+            return {'ret': 'fail', 'reason': 'no_titles'}
+        try:
+            self.client = WolfClient(base_url=self.base_url, logger=P.logger,
+                                     proxy_url=self.proxy_url,
+                                     cookies=self.cookies,
+                                     flaresolverr_url=self.flaresolverr_url)
+        except Exception as e:
+            _auto_set(status='error', finished_at=datetime.now().isoformat(),
+                      message=f'클라이언트 초기화 실패: {e}')
+            return {'ret': 'fail', 'reason': 'client_init', 'msg': str(e)}
+
+        reg = alr = mis = works = 0
+        for idx, raw in enumerate(self.items, start=1):
+            _auto_set(current_title=raw, current_phase='fetch_episodes',
+                      titles_done=idx - 1)
+            parsed = WolfClient.extract_work_id(raw)
+            if not parsed:
+                P.logger.warning('[reconcile] %r workId 추출 실패', raw)
+                continue
+            kind, work_id = parsed
+            try:
+                work = self.client.get_work(kind, work_id)
+            except Exception as e:
+                P.logger.warning('[reconcile] [%s] get_work 실패: %s', work_id, e)
+                continue
+            title = work.get('title') or f'만화_{work_id}'
+            _auto_set(current_title=title, current_phase='scan_disk')
+            work_dir = title_dir_for(self.download_root, kind, title)
+            r, a, m = self._reconcile_one(kind, work_id, title, work_dir,
+                                          work.get('episodes') or [])
+            reg += r; alr += a; mis += m; works += 1
+            _auto_summary_inc('downloaded', r)
+            _auto_summary_inc('skipped', a)
+
+        _auto_set(status='done', finished_at=datetime.now().isoformat(),
+                  titles_done=len(self.items), current_title='',
+                  current_phase='',
+                  message=(f'디스크 반영 완료 — 신규 {reg}, 기존 {alr}, '
+                           f'미보유 {mis} (작품 {works})'))
+        P.logger.info('[reconcile] 완료 — 신규 %d 기존 %d 미보유 %d 작품 %d',
+                      reg, alr, mis, works)
+        return {'ret': 'success', 'registered': reg, 'already': alr,
+                'missing': mis, 'works': works}
+
+    def _reconcile_one(self, kind, work_id, title, work_dir, episodes):
+        """작품 1개: 회차별 폴더/zip 존재 확인 → DB 등록. (신규, 기존, 미보유)"""
+        registered = already = missing = 0
+        for ep in episodes:
+            if ep.get('paid'):
+                continue
+            no = int(ep.get('no') or 0)
+            ep_title = ep.get('title') or f'{no}화'
+            ep_url_id = ep.get('ep_url_id') or ''
+            folder = os.path.join(work_dir,
+                                  f'{no:04d}_{_safe_filename(ep_title)}')
+            zip_path = folder + '.zip'
+            imgs = _count_images(folder)
+            has_folder = os.path.isdir(folder) and imgs > 0
+            has_zip = os.path.isfile(zip_path)
+            if not has_folder and not has_zip:
+                missing += 1
+                continue
+            rec = (db.session.query(ModelWolfItem)
+                   .filter_by(work_kind=kind, work_id=work_id,
+                              ep_url_id=ep_url_id).first())
+            if rec and rec.status == 'completed':
+                already += 1
+                continue
+            if rec is None:
+                rec = ModelWolfItem()
+                rec.work_kind = kind
+                rec.work_id = work_id
+                rec.ep_url_id = ep_url_id
+                db.session.add(rec)
+            rec.work_title = title
+            rec.episode_no = no
+            rec.episode_title = ep_title
+            rec.status = 'completed'
+            rec.save_dir = zip_path if has_zip else folder
+            if has_folder:
+                rec.page_count = imgs
+                rec.downloaded_count = imgs
+            rec.error_msg = 'disk-reconcile'
+            rec.downloaded_at = rec.downloaded_at or datetime.now()
+            rec.updated_time = datetime.now()
+            registered += 1
+        db.session.commit()
+        return registered, already, missing
 
     # ──────────────────────── per item ────────────────────────
 
