@@ -1,0 +1,353 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div>
+  <!-- ── 제목 검색 ── -->
+  <div class="container-fluid" style="margin-top:6px;">
+    <div class="form-group">
+      <label><strong>제목 검색</strong></label>
+      <div class="input-group">
+        <input id="search_query" type="text" class="form-control"
+               placeholder="작품 제목 (예: 비뢰도)" />
+        <div class="input-group-append">
+          <button id="searchBtn" class="btn btn-primary" type="button">검색</button>
+        </div>
+      </div>
+      <small class="form-text text-muted">
+        검색 후 결과에서 "다운로드"(즉시 수동 다운) 또는 "목록추가"(자동 다운 대상 등록) 선택.
+      </small>
+    </div>
+    <div id="search_results" class="row"></div>
+  </div>
+
+  <hr style="margin:16px 0;"/>
+
+  <!-- ── URL/ID 직접 입력 ── -->
+  {{ macros.setting_input_text_and_buttons('manual_url', '늑대닷컴 작품 URL / ID',
+      [['manualAnalyzeBtn', '분석'],
+       ['manualAddBtn',     '목록추가'],
+       ['manualCancelBtn',  '취소']],
+      value='',
+      desc=['예) https://wfwf436.com/list?toon=4461',
+            '예) https://wfwf436.com/view?toon=4461&num=211  (회차 URL 도 작품 단위로 인식)',
+            '예) 4461  (toon 번호만 입력해도 됨)',
+            '"분석": 회차 목록을 불러온 뒤 아래에서 받을 회차를 선택해 다운로드.',
+            '"목록추가": 자동 스케줄 다운로드 대상(설정 → 작품 목록)에 등록.']) }}
+
+  <div class="container-fluid" style="margin-top:10px;">
+    <div class="row" style="padding:6px 0;">
+      <div class="col-md-3"><strong>상태:</strong> <span id="m_status">-</span></div>
+      <div class="col-md-9"><span id="m_message" style="color:#666;"></span></div>
+    </div>
+    <div class="row" style="padding:6px 0;">
+      <div class="col-md-3"><strong>작품:</strong> <span id="m_series">-</span></div>
+      <div class="col-md-9">
+        <strong>진행:</strong> <span id="m_done">0</span> / <span id="m_total">0</span>
+        (완료 <span id="m_completed">0</span>, 스킵 <span id="m_skipped">0</span>, 실패 <span id="m_failed">0</span>)
+        <div class="progress" style="height:14px; margin-top:4px;">
+          <div id="m_progress_bar" class="progress-bar progress-bar-striped" role="progressbar"
+               style="width:0%;">0%</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 회차 선택 컨트롤 ── -->
+  <div class="container-fluid" id="sel_controls" style="margin-top:10px; display:none;">
+    <div class="row align-items-center" style="padding:6px 0;">
+      <div class="col-auto">
+        <label style="margin:0;"><input type="checkbox" id="chkAll"/> 전체선택</label>
+      </div>
+      <div class="col-auto">
+        <button id="selIncompleteBtn" class="btn btn-sm btn-outline-secondary" type="button">미완료만</button>
+        <button id="selInvertBtn" class="btn btn-sm btn-outline-secondary" type="button">선택반전</button>
+      </div>
+      <div class="col-auto"><span style="color:#666;">선택 <strong id="selCount">0</strong> / <span id="selTotal">0</span>개</span></div>
+      <div class="col text-right">
+        <button id="dlSelectedBtn" class="btn btn-sm btn-primary" type="button">선택 회차 다운로드</button>
+      </div>
+    </div>
+  </div>
+
+  {{ macros.m_hr_head_top() }}
+  {{ macros.m_row_start('0') }}
+  <div class="col-sm-1" style="text-align:center;"><strong>선택</strong></div>
+  <div class="col-sm-1" style="text-align:center;"><strong>#</strong></div>
+  <div class="col-sm-5"><strong>회차</strong></div>
+  <div class="col-sm-2" style="text-align:center;"><strong>진행</strong></div>
+  <div class="col-sm-3" style="text-align:center;"><strong>상태</strong></div>
+  {{ macros.m_row_end() }}
+  {{ macros.m_hr_head_bottom() }}
+  <div id="m_episodes"></div>
+</div>
+
+<script type="text/javascript">
+var package_name = "{{ arg['package_name'] }}";
+var pollTimer = null;
+
+function esc(s){
+  return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                  .replace(/"/g,'&quot;');
+}
+function stateBadge(s){
+  var m = {'pending':['light','대기'],'downloading':['info','다운중'],
+           'completed':['success','완료'],'skipped':['secondary','스킵'],
+           'failed':['danger','실패']};
+  var v = m[s] || ['light', s || '-'];
+  return '<span class="badge badge-' + v[0] + '">' + v[1] + '</span>';
+}
+
+var lockCheckboxes = false;   // 분석/다운로드 중엔 체크박스 잠금
+function renderEpisodes(eps, currentIdx){
+  var html = '';
+  for (var i = 0; i < eps.length; i++){
+    var e = eps[i];
+    var pages = (e.pages_total ? (e.pages_done + '/' + e.pages_total) : '-');
+    var rowStyle = (i === currentIdx) ? ' style="background:#fff3cd; color:#212529;"' : '';
+    var checked = (e.selected !== false) ? ' checked' : '';
+    var dis = (lockCheckboxes || e.paid) ? ' disabled' : '';
+    html += '<div class="row"' + rowStyle + ' style="padding:3px 0; border-bottom:1px solid #eee;">';
+    html += '<div class="col-sm-1" style="text-align:center;"><input type="checkbox" class="ep-chk" data-ep="'
+         + esc(e.ep_url_id) + '" data-state="' + esc(e.state) + '"' + checked + dis + '/></div>';
+    html += '<div class="col-sm-1" style="text-align:center;">' + (e.no || '-') + '</div>';
+    html += '<div class="col-sm-5" style="word-break:break-all;"><small>' + esc(e.title) + '</small></div>';
+    html += '<div class="col-sm-2" style="text-align:center;">' + pages + '</div>';
+    html += '<div class="col-sm-3" style="text-align:center;">' + stateBadge(e.state)
+         + (e.error ? '<br/><small style="color:#c00;">' + esc(e.error) + '</small>' : '') + '</div>';
+    html += '</div>';
+  }
+  document.getElementById('m_episodes').innerHTML = html;
+  refreshSelCount();
+}
+
+function refreshSelCount(){
+  var boxes = document.querySelectorAll('#m_episodes .ep-chk');
+  var total = boxes.length, sel = 0;
+  for (var i = 0; i < boxes.length; i++){ if (boxes[i].checked) sel++; }
+  var c = document.getElementById('selCount'); if (c) c.innerText = sel;
+  var t = document.getElementById('selTotal'); if (t) t.innerText = total;
+  var all = document.getElementById('chkAll'); if (all) all.checked = (total > 0 && sel === total);
+}
+
+var STATUS_LABEL = {
+  'idle':'대기', 'analyzing':'분석 중', 'analyzed':'분석완료(선택 대기)',
+  'running':'다운로드 중', 'done':'완료', 'error':'에러', 'canceled':'취소됨'
+};
+function applyState(st){
+  document.getElementById('m_status').innerText = STATUS_LABEL[st.status] || st.status || '-';
+  document.getElementById('m_message').innerText = st.message || '';
+  document.getElementById('m_series').innerText = st.work_title || '-';
+  var total = st.total_to_download || 0;
+  var done = (st.completed || 0) + (st.skipped || 0) + (st.failed || 0);
+  document.getElementById('m_total').innerText = total;
+  document.getElementById('m_done').innerText = done;
+  document.getElementById('m_completed').innerText = st.completed || 0;
+  document.getElementById('m_skipped').innerText = st.skipped || 0;
+  document.getElementById('m_failed').innerText = st.failed || 0;
+  var pct = total > 0 ? Math.floor(done * 100 / Math.max(total, 1)) : 0;
+  var bar = document.getElementById('m_progress_bar');
+  if (st.status === 'analyzing') {
+    // 회차 수 확정 전 — 인디터미닛 표시
+    bar.style.width = '100%';
+    bar.innerText = '분석 중…';
+    bar.classList.add('progress-bar-animated');
+  } else {
+    bar.style.width = pct + '%';
+    bar.innerText = pct + '%';
+    if (st.status === 'running') bar.classList.add('progress-bar-animated');
+    else bar.classList.remove('progress-bar-animated');
+  }
+
+  // 회차 선택 컨트롤: 회차가 있을 때만 노출, 분석/다운로드 중엔 잠금
+  var hasEps = !!(st.episodes && st.episodes.length);
+  document.getElementById('sel_controls').style.display = hasEps ? '' : 'none';
+  lockCheckboxes = (st.status === 'running' || st.status === 'analyzing');
+  var dlBtn = document.getElementById('dlSelectedBtn');
+  if (dlBtn) dlBtn.disabled = lockCheckboxes;
+
+  renderEpisodes(st.episodes || [], st.current_index);
+
+  if (st.status === 'running' || st.status === 'analyzing') {
+    if (!pollTimer) pollTimer = setInterval(pollProgress, 1500);
+  } else {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+}
+
+function pollProgress(){
+  $.post('/' + package_name + '/ajax/basic/command',
+         {command: 'mprogress'},
+         function(data){
+    if (data && data.ret === 'success') applyState(data.state);
+  });
+}
+
+// ── 카드 렌더 (검색·목록 공용) ──
+function renderCards(results, boxId, emptyMsg){
+  var box = document.getElementById(boxId);
+  if (!results || !results.length){
+    box.innerHTML = '<div class="col-12"><small style="color:#999;">' + (emptyMsg || '결과 없음') + '</small></div>';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < results.length; i++){
+    var r = results[i];
+    var badge = '';
+    if (r.completed) badge += ' <span class="badge badge-secondary">완결</span>';
+    if (r.adult)     badge += ' <span class="badge badge-danger">19</span>';
+    html += '<div class="col-md-6" style="padding:6px;">';
+    html += '  <div style="border:1px solid #ddd; border-radius:6px; padding:8px; display:flex; gap:8px;">';
+    if (r.thumb){
+      // CDN 핫링크 차단 우회 — 서버 프록시 경유
+      var thumbUrl = '/' + package_name + '/ajax/basic/thumb?u=' + encodeURIComponent(r.thumb);
+      html += '    <img src="' + thumbUrl + '" style="width:56px; height:76px; object-fit:cover; border-radius:4px;" onerror="this.style.display=\'none\'"/>';
+    }
+    html += '    <div style="flex:1; min-width:0;">';
+    html += '      <div style="font-weight:600;">' + esc(r.title) + badge + '</div>';
+    html += '      <div style="font-size:12px; color:#777;">' + esc(r.genres || '') + '</div>';
+    html += '      <div style="font-size:12px; color:#777;">' + esc(r.last_episode || '') + '</div>';
+    html += '      <div style="margin-top:6px;">';
+    html += '        <button class="btn btn-sm btn-primary js-dl" data-id="' + esc(r.work_id) + '">다운로드</button> ';
+    html += '        <button class="btn btn-sm btn-outline-secondary js-add" data-id="' + esc(r.work_id) + '">목록추가</button>';
+    html += '      </div>';
+    html += '    </div>';
+    html += '  </div>';
+    html += '</div>';
+  }
+  box.innerHTML = html;
+}
+function renderSearchResults(results){
+  renderCards(results, 'search_results', '검색 결과 없음');
+}
+
+$(document).ready(function(){
+  pollProgress();
+});
+
+$('body').on('click', '#searchBtn', function(e){
+  e.preventDefault();
+  var q = ($('#search_query').val() || '').trim();
+  if (!q) { $.notify('검색어를 입력하세요', {className: 'warn'}); return; }
+  $('#search_results').html('<div class="col-12"><small>검색 중...</small></div>');
+  $.post('/' + package_name + '/ajax/basic/command',
+         {command: 'msearch', arg1: q, query: q},
+         function(data){
+    if (data && data.ret === 'success'){
+      renderSearchResults(data.results);
+    } else {
+      $('#search_results').html('');
+      $.notify((data && data.msg) || '검색 실패', {className: 'error'});
+    }
+  }).fail(function(xhr){
+    $.notify('서버 호출 실패: ' + xhr.status, {className: 'error'});
+  });
+});
+
+$('#search_query').on('keypress', function(e){
+  if (e.which === 13){ e.preventDefault(); $('#searchBtn').click(); }
+});
+
+// 검색 결과 → 분석(→ 아래에서 회차 선택 후 다운로드)
+$('body').on('click', '.js-dl', function(e){
+  e.preventDefault();
+  var id = $(this).data('id');
+  $('#manual_url').val(String(id));
+  $('#manualAnalyzeBtn').click();
+});
+// 검색 결과 → 목록추가
+$('body').on('click', '.js-add', function(e){
+  e.preventDefault();
+  var id = String($(this).data('id'));
+  $.post('/' + package_name + '/ajax/basic/command',
+         {command: 'add_title', arg1: id, url: id},
+         function(data){
+    $.notify((data && data.msg) || '처리됨',
+             {className: (data && data.ret === 'success') ? 'success' : 'error'});
+  });
+});
+
+// 분석 (다운로드 X) — 완료되면 아래 목록에서 회차 선택
+$('body').on('click', '#manualAnalyzeBtn', function(e){
+  e.preventDefault();
+  var url = ($('#manual_url').val() || '').trim();
+  if (!url) { $.notify('URL을 입력하세요', {className: 'warn'}); return; }
+  $.notify('분석 시작…', {className: 'info'});
+  $.post('/' + package_name + '/ajax/basic/command',
+         {command: 'manalyze', arg1: url, url: url},
+         function(data){
+    if (data && data.ret === 'success'){
+      $.notify(data.msg || '분석 시작', {className: 'success'});
+    } else {
+      $.notify((data && data.msg) || '분석 실패', {className: 'error'});
+    }
+    pollProgress();
+    if (!pollTimer) pollTimer = setInterval(pollProgress, 1500);
+  }).fail(function(xhr){
+    $.notify('서버 호출 실패: ' + xhr.status + ' ' + xhr.statusText, {className: 'error'});
+  });
+});
+
+// ── 회차 선택 컨트롤 ──
+$('body').on('change', '#chkAll', function(){
+  var on = this.checked;
+  $('#m_episodes .ep-chk:not(:disabled)').prop('checked', on);
+  refreshSelCount();
+});
+$('body').on('change', '.ep-chk', function(){ refreshSelCount(); });
+$('body').on('click', '#selIncompleteBtn', function(e){
+  e.preventDefault();
+  $('#m_episodes .ep-chk:not(:disabled)').each(function(){
+    this.checked = ($(this).attr('data-state') !== 'completed');
+  });
+  refreshSelCount();
+});
+$('body').on('click', '#selInvertBtn', function(e){
+  e.preventDefault();
+  $('#m_episodes .ep-chk:not(:disabled)').each(function(){ this.checked = !this.checked; });
+  refreshSelCount();
+});
+// 선택 회차 다운로드
+$('body').on('click', '#dlSelectedBtn', function(e){
+  e.preventDefault();
+  var ids = [];
+  $('#m_episodes .ep-chk:checked').each(function(){ ids.push($(this).attr('data-ep')); });
+  if (!ids.length){ $.notify('선택된 회차가 없습니다', {className: 'warn'}); return; }
+  $.notify(ids.length + '개 다운로드 시작…', {className: 'info'});
+  $.post('/' + package_name + '/ajax/basic/command',
+         {command: 'mrun_selected', arg1: ids.join(','), eps: ids.join(',')},
+         function(data){
+    if (data && data.ret === 'success'){
+      $.notify(data.msg || '시작됨', {className: 'success'});
+    } else {
+      $.notify((data && data.msg) || '실행 실패', {className: 'error'});
+    }
+    pollProgress();
+    if (!pollTimer) pollTimer = setInterval(pollProgress, 1500);
+  }).fail(function(xhr){
+    $.notify('서버 호출 실패: ' + xhr.status, {className: 'error'});
+  });
+});
+
+$('body').on('click', '#manualAddBtn', function(e){
+  e.preventDefault();
+  var url = ($('#manual_url').val() || '').trim();
+  if (!url) { $.notify('URL/ID를 입력하세요', {className: 'warn'}); return; }
+  $.post('/' + package_name + '/ajax/basic/command',
+         {command: 'add_title', arg1: url, url: url},
+         function(data){
+    $.notify((data && data.msg) || '처리됨',
+             {className: (data && data.ret === 'success') ? 'success' : 'error'});
+  });
+});
+
+$('body').on('click', '#manualCancelBtn', function(e){
+  e.preventDefault();
+  $.post('/' + package_name + '/ajax/basic/command',
+         {command: 'mcancel'},
+         function(data){
+    $.notify('취소 요청', {className: 'info'});
+    pollProgress();
+  });
+});
+</script>
+{% endblock %}

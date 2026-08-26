@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div>
+  <form id="form_search" class="form-inline" style="text-align:left">
+    <div class="container-fluid">
+      <div class="row show-grid">
+        <span class="col-md-2">
+          <select id="option" name="option" class="form-control form-control-sm">
+            <option value="all">전체</option>
+            <option value="completed">완료</option>
+            <option value="failed">실패</option>
+            <option value="partial">부분</option>
+            <option value="pending">대기</option>
+          </select>
+        </span>
+        <span class="col-md-7">
+          <input id="search_word" name="search_word" class="form-control form-control-sm w-75" type="text" placeholder="작품/회차 검색" aria-label="Search">
+          <button id="search" class="btn btn-sm btn-outline-success">검색</button>
+          <button id="reset_btn" class="btn btn-sm btn-outline-success">리셋</button>
+        </span>
+        <span class="col-md-3" style="text-align:right;">
+          <button id="bulk_delete_btn" class="btn btn-sm btn-danger" disabled>
+            선택 삭제 (<span id="check_count">0</span>)
+          </button>
+        </span>
+      </div>
+    </div>
+  </form>
+  <div id='page1'></div>
+  {{ macros.m_hr_head_top() }}
+  {{ macros.m_row_start('0') }}
+  <div class="col-sm-1" style="text-align:center;">
+    <input type="checkbox" id="check_all" title="전체 선택"/>
+  </div>
+  <div class="col-sm-1" style="text-align:center;"><strong>종류</strong></div>
+  <div class="col-sm-3" style="text-align:center;"><strong>작품 / 회차</strong></div>
+  <div class="col-sm-1" style="text-align:center;"><strong>장수/용량</strong></div>
+  <div class="col-sm-1" style="text-align:center;"><strong>상태</strong></div>
+  <div class="col-sm-4" style="text-align:center;"><strong>받은시각 / 경로</strong></div>
+  <div class="col-sm-1" style="text-align:center;"><strong>작업</strong></div>
+  {{ macros.m_row_end() }}
+  {{ macros.m_hr_head_bottom() }}
+  <div id="list_div"></div>
+  <div id='page2'></div>
+</div>
+
+<script type="text/javascript">
+var package_name = "{{ arg['package_name'] }}";
+var current_data = null;
+var dataList = null;
+
+function fmtBytes(n){
+  if(!n) return '-';
+  if(n < 1024) return n + 'B';
+  if(n < 1024*1024) return (n/1024).toFixed(1) + 'KB';
+  return (n/1024/1024).toFixed(1) + 'MB';
+}
+function statusBadge(s){
+  var cls = 'secondary';
+  if(s === 'completed') cls = 'success';
+  else if(s === 'partial') cls = 'warning';
+  else if(s === 'failed') cls = 'danger';
+  else if(s === 'downloading') cls = 'info';
+  return '<span class="badge badge-' + cls + '">' + (s || '-') + '</span>';
+}
+function kindBadge(k){
+  var m = {manhwa:['primary','만화']};
+  var v = m[k] || ['light', k || '-'];
+  return '<span class="badge badge-' + v[0] + '">' + v[1] + '</span>';
+}
+
+function make_list(data) {
+  var str = '';
+  for (var i in data) {
+    var item = data[i];
+    str += '<div class="row" style="padding-top:4px; padding-bottom:4px; align-items:center;">';
+    str += '<div class="col-sm-1" style="text-align:center;">';
+    str +=   '<input type="checkbox" class="row-check" data-id="' + item.id + '"/>';
+    str += '</div>';
+    str += '<div class="col-sm-1" style="text-align:center;">' + kindBadge(item.work_kind) + '</div>';
+    str += '<div class="col-sm-3" style="word-break:break-all;">';
+    str +=   '<strong>' + (item.work_title || '-') + '</strong><br/>';
+    str +=   '<small>' + (item.episode_title || '-') + '</small>';
+    str += '</div>';
+    str += '<div class="col-sm-1" style="text-align:center;">';
+    str +=   (item.downloaded_count || 0) + '/' + (item.page_count || '?') + '<br/>';
+    str +=   '<small>' + fmtBytes(item.total_bytes) + '</small>';
+    str += '</div>';
+    str += '<div class="col-sm-1" style="text-align:center;">' + statusBadge(item.status) + '</div>';
+    str += '<div class="col-sm-4" style="word-break:break-all;">';
+    str +=   '<small>' + (item.downloaded_at || '-') + '</small><br/>';
+    str +=   '<small style="color:#888;">' + (item.save_dir || '') + '</small>';
+    str += '</div>';
+    str += '<div class="col-sm-1" style="text-align:center;">';
+    str +=   '<button class="btn btn-sm btn-outline-danger del-btn" data-id="' + item.id + '">삭제</button>';
+    str += '</div>';
+    str += '</div>';
+    if (i != data.length - 1) str += '<hr style="width:100%; margin:5px;" />';
+  }
+  dataList = data;
+  current_data = {list: data};
+  document.getElementById("list_div").innerHTML = str;
+  $('#check_all').prop('checked', false);
+  updateCheckCount();
+}
+
+function updateCheckCount() {
+  var n = $('.row-check:checked').length;
+  $('#check_count').text(n);
+  $('#bulk_delete_btn').prop('disabled', n === 0);
+}
+
+function request_search(page, move_top) {
+  if (move_top === undefined) move_top = true;
+  globalRequestSearch(page);
+  if (move_top) window.scrollTo(0, 0);
+}
+
+$(document).ready(function(){
+  globalRequestSearch("1");
+});
+
+$("#search").click(function(e) {
+  e.preventDefault();
+  globalRequestSearch("1");
+});
+
+$("body").on('click', '#page', function(e){
+  e.preventDefault();
+  gloablSearchPageBtn($(this).data('page'));
+});
+
+$("#reset_btn").click(function(e) {
+  e.preventDefault();
+  document.getElementById("search_word").value = '';
+  document.getElementById("option").value = 'all';
+  globalRequestSearch("1");
+});
+
+$('body').on('click', '.del-btn', function(e){
+  e.preventDefault();
+  var id = $(this).data('id');
+  if (!confirm('이 회차 이력을 삭제하시겠습니까?\n다음 다운로드 시 다시 받게 됩니다.')) return;
+  $.post('/' + package_name + '/ajax/basic/db_delete_item',
+         {db_id: id},
+         function(ret){
+    if (ret) {
+      $.notify('삭제됨 — 다음 다운 시 재다운로드', {className:'success'});
+      globalRequestSearch('1');
+    } else {
+      $.notify('삭제 실패', {className:'error'});
+    }
+  }).fail(function(xhr){
+    $.notify('서버 호출 실패: ' + xhr.status, {className:'error'});
+  });
+});
+
+$('body').on('change', '.row-check', function(){
+  updateCheckCount();
+  var total = $('.row-check').length;
+  var checked = $('.row-check:checked').length;
+  $('#check_all').prop('checked', total > 0 && total === checked);
+});
+
+$('body').on('change', '#check_all', function(){
+  var v = this.checked;
+  $('.row-check').prop('checked', v);
+  updateCheckCount();
+});
+
+$('body').on('click', '#bulk_delete_btn', function(e){
+  e.preventDefault();
+  var ids = $('.row-check:checked').map(function(){
+    return $(this).data('id');
+  }).get();
+  if (ids.length === 0) {
+    $.notify('선택된 항목 없음', {className:'warn'});
+    return;
+  }
+  if (!confirm(ids.length + '개 회차 이력을 삭제하시겠습니까?')) return;
+  $.post('/' + package_name + '/ajax/basic/command',
+         {command: 'db_delete_items', arg1: ids.join(',')},
+         function(ret){
+    if (ret && ret.ret === 'success') {
+      $.notify((ret.count || ids.length) + '개 삭제됨', {className:'success'});
+      globalRequestSearch('1');
+    } else {
+      $.notify('삭제 실패: ' + ((ret && ret.msg) || '?'), {className:'error'});
+    }
+  }).fail(function(xhr){
+    $.notify('서버 호출 실패: ' + xhr.status, {className:'error'});
+  });
+});
+</script>
+{% endblock %}
