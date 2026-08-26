@@ -112,28 +112,6 @@
                   '비워두면 자동 핑거프린트만 사용. Cloudflare 우회/IP 차단 시에만 사용 권장.',
                   '※ 쿠키 만료 시 알림 탭의 알림 URL 로 통지됨.']) }}
 
-        <hr style="margin:18px 0;"/>
-        <h5 style="margin-bottom:8px;">FlareSolverr (선택)</h5>
-
-        {{ macros.setting_input_text('flaresolverr_url', 'FlareSolverr URL',
-            value=arg['flaresolverr_url'],
-            desc=['Cloudflare JS 챌린지 우회용 — 헤드리스 Chrome 으로 챌린지 실제 풀이.',
-                  '예) http://flaresolverr:8191 (같은 docker network) 또는 http://192.168.1.10:8191',
-                  '도커 설치: docker run -d --name flaresolverr --restart unless-stopped -p 8191:8191 ghcr.io/flaresolverr/flaresolverr:latest',
-                  '비워두면 직접 호출 (curl_cffi). 403 + "Just a moment..." 발생 시 설정 권장.',
-                  '※ 회차당 5~15초 지연 추가됨. 이미지 다운은 우회 안 거침 (CDN 직접).']) }}
-
-        <hr style="margin:18px 0;"/>
-        <h5 style="margin-bottom:8px;">프록시 (선택)</h5>
-
-        {{ macros.setting_checkbox('use_proxy', '프록시 사용',
-            value=arg['use_proxy'],
-            desc='On + 아래 URL 값이 있을 때만 프록시 적용.') }}
-
-        {{ macros.setting_input_text('proxy_url', '프록시 URL',
-            value=arg['proxy_url'],
-            desc=['warproxy 등 외부 프록시.',
-                  '예) http://user:pass@proxy.host:8080 또는 socks5h://host:1080']) }}
       {{ macros.m_tab_content_end() }}
 
       {{ macros.m_tab_content_start('notify', false) }}
@@ -218,7 +196,7 @@
           <h4>문제 해결</h4>
           <ul>
             <li>"접속 실패" 알림이 오면 → 인증 탭의 <strong>늑대닷컴 도메인</strong> 을 공지 채널에서 확인 후 수동 갱신(또는 "도메인 자동 갱신").</li>
-            <li>다운로드 중 차단(blocked) 메시지가 자주 뜨면 → 인증 탭에 브라우저 쿠키 입력 또는 프록시/FlareSolverr 설정.</li>
+            <li>다운로드 중 차단(blocked) 메시지가 자주 뜨면 → 인증 탭에 브라우저 쿠키 입력.</li>
             <li>이력 초기화는 일반 탭의 "이력 초기화" 버튼으로. 작품 삭제는 목록 textarea 에서 줄 제거.</li>
           </ul>
         </div>
@@ -231,13 +209,6 @@
 var package_name = "{{ arg['package_name'] }}";
 
 $(document).ready(function(){
-  function syncProxyInput(){
-    var on = $('#use_proxy').is(':checked');
-    $('#proxy_url').prop('disabled', !on);
-    $('#proxy_url').css('opacity', on ? 1 : 0.5);
-  }
-  syncProxyInput();
-  $('body').on('change', '#use_proxy', syncProxyInput);
 });
 
 $('body').on('click', '#select_download_path_btn', function(e){
