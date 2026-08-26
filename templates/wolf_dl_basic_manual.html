@@ -2,34 +2,14 @@
 {% block content %}
 
 <div>
-  <!-- ── 제목 검색 ── -->
-  <div class="container-fluid" style="margin-top:6px;">
-    <div class="form-group">
-      <label><strong>제목 검색</strong></label>
-      <div class="input-group">
-        <input id="search_query" type="text" class="form-control"
-               placeholder="작품 제목 (예: 비뢰도)" />
-        <div class="input-group-append">
-          <button id="searchBtn" class="btn btn-primary" type="button">검색</button>
-        </div>
-      </div>
-      <small class="form-text text-muted">
-        검색 후 결과에서 "다운로드"(즉시 수동 다운) 또는 "목록추가"(자동 다운 대상 등록) 선택.
-      </small>
-    </div>
-    <div id="search_results" class="row"></div>
-  </div>
-
-  <hr style="margin:16px 0;"/>
-
   <!-- ── URL/ID 직접 입력 ── -->
   {{ macros.setting_input_text_and_buttons('manual_url', '늑대닷컴 작품 URL / ID',
       [['manualAnalyzeBtn', '분석'],
        ['manualAddBtn',     '목록추가'],
        ['manualCancelBtn',  '취소']],
       value='',
-      desc=['예) https://wfwf436.com/list?toon=4461',
-            '예) https://wfwf436.com/view?toon=4461&num=211  (회차 URL 도 작품 단위로 인식)',
+      desc=['예) https://wfwf485.com/list?toon=4461',
+            '예) https://wfwf485.com/view?toon=4461&num=211  (회차 URL 도 작품 단위로 인식)',
             '예) 4461  (toon 번호만 입력해도 됨)',
             '"분석": 회차 목록을 불러온 뒤 아래에서 받을 회차를 선택해 다운로드.',
             '"목록추가": 자동 스케줄 다운로드 대상(설정 → 작품 목록)에 등록.']) }}
@@ -182,88 +162,8 @@ function pollProgress(){
   });
 }
 
-// ── 카드 렌더 (검색·목록 공용) ──
-function renderCards(results, boxId, emptyMsg){
-  var box = document.getElementById(boxId);
-  if (!results || !results.length){
-    box.innerHTML = '<div class="col-12"><small style="color:#999;">' + (emptyMsg || '결과 없음') + '</small></div>';
-    return;
-  }
-  var html = '';
-  for (var i = 0; i < results.length; i++){
-    var r = results[i];
-    var badge = '';
-    if (r.completed) badge += ' <span class="badge badge-secondary">완결</span>';
-    if (r.adult)     badge += ' <span class="badge badge-danger">19</span>';
-    html += '<div class="col-md-6" style="padding:6px;">';
-    html += '  <div style="border:1px solid #ddd; border-radius:6px; padding:8px; display:flex; gap:8px;">';
-    if (r.thumb){
-      // CDN 핫링크 차단 우회 — 서버 프록시 경유
-      var thumbUrl = '/' + package_name + '/ajax/basic/thumb?u=' + encodeURIComponent(r.thumb);
-      html += '    <img src="' + thumbUrl + '" style="width:56px; height:76px; object-fit:cover; border-radius:4px;" onerror="this.style.display=\'none\'"/>';
-    }
-    html += '    <div style="flex:1; min-width:0;">';
-    html += '      <div style="font-weight:600;">' + esc(r.title) + badge + '</div>';
-    html += '      <div style="font-size:12px; color:#777;">' + esc(r.genres || '') + '</div>';
-    html += '      <div style="font-size:12px; color:#777;">' + esc(r.last_episode || '') + '</div>';
-    html += '      <div style="margin-top:6px;">';
-    html += '        <button class="btn btn-sm btn-primary js-dl" data-id="' + esc(r.work_id) + '">다운로드</button> ';
-    html += '        <button class="btn btn-sm btn-outline-secondary js-add" data-id="' + esc(r.work_id) + '">목록추가</button>';
-    html += '      </div>';
-    html += '    </div>';
-    html += '  </div>';
-    html += '</div>';
-  }
-  box.innerHTML = html;
-}
-function renderSearchResults(results){
-  renderCards(results, 'search_results', '검색 결과 없음');
-}
-
 $(document).ready(function(){
   pollProgress();
-});
-
-$('body').on('click', '#searchBtn', function(e){
-  e.preventDefault();
-  var q = ($('#search_query').val() || '').trim();
-  if (!q) { $.notify('검색어를 입력하세요', {className: 'warn'}); return; }
-  $('#search_results').html('<div class="col-12"><small>검색 중...</small></div>');
-  $.post('/' + package_name + '/ajax/basic/command',
-         {command: 'msearch', arg1: q, query: q},
-         function(data){
-    if (data && data.ret === 'success'){
-      renderSearchResults(data.results);
-    } else {
-      $('#search_results').html('');
-      $.notify((data && data.msg) || '검색 실패', {className: 'error'});
-    }
-  }).fail(function(xhr){
-    $.notify('서버 호출 실패: ' + xhr.status, {className: 'error'});
-  });
-});
-
-$('#search_query').on('keypress', function(e){
-  if (e.which === 13){ e.preventDefault(); $('#searchBtn').click(); }
-});
-
-// 검색 결과 → 분석(→ 아래에서 회차 선택 후 다운로드)
-$('body').on('click', '.js-dl', function(e){
-  e.preventDefault();
-  var id = $(this).data('id');
-  $('#manual_url').val(String(id));
-  $('#manualAnalyzeBtn').click();
-});
-// 검색 결과 → 목록추가
-$('body').on('click', '.js-add', function(e){
-  e.preventDefault();
-  var id = String($(this).data('id'));
-  $.post('/' + package_name + '/ajax/basic/command',
-         {command: 'add_title', arg1: id, url: id},
-         function(data){
-    $.notify((data && data.msg) || '처리됨',
-             {className: (data && data.ret === 'success') ? 'success' : 'error'});
-  });
 });
 
 // 분석 (다운로드 X) — 완료되면 아래 목록에서 회차 선택

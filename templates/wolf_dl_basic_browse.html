@@ -5,6 +5,19 @@
   <!-- ── 작품 목록 (연재/완결 + 필터) ── -->
   <div class="container-fluid" style="margin-top:10px;">
     <h4 style="margin-bottom:10px;">작품 목록</h4>
+
+    <!-- ── 제목 검색 (결과는 아래 목록 영역에 그대로 표시) ── -->
+    <div class="form-row align-items-end" style="gap:8px 0; margin-bottom:10px;">
+      <div class="col-md-6">
+        <div class="input-group input-group-sm">
+          <input id="search_query" type="text" class="form-control"
+                 placeholder="작품 제목 검색 (예: 비뢰도)" />
+          <div class="input-group-append">
+            <button id="searchBtn" class="btn btn-primary" type="button">검색</button>
+          </div>
+        </div>
+      </div>
+    </div>
     <div class="form-row align-items-end" style="gap:8px 0;">
       <div class="col-auto">
         <div class="btn-group" role="group">
@@ -52,8 +65,10 @@
     </div>
     <small class="form-text text-muted">
       연재/완결 목록을 필터로 조회. 요일은 연재 목록에서만 유효.
+      제목 검색 결과도 같은 영역에 표시되며, "목록으로" 를 누르면 필터 목록으로 돌아갑니다.
       "다운로드"는 즉시 수동 다운(진행 상황 탭에서 확인), "목록추가"는 자동 다운 대상 등록.
     </small>
+    <div id="browse_mode" style="margin:6px 0;"></div>
     <div id="browse_results" class="row" style="margin-top:6px;"></div>
     <div id="browse_pager" style="text-align:center; margin:8px 0;"></div>
   </div>
@@ -112,6 +127,7 @@ function doBrowse(pg){
     t1: $('#f_t1').val() || '', t2: $('#f_t2').val() || '',
     t3: $('#f_t3').val() || '', o: $('#f_o').val() || 'n'
   };
+  $('#browse_mode').html('');
   $('#browse_results').html('<div class="col-12"><small>불러오는 중...</small></div>');
   $('#browse_pager').html('');
   $.post('/' + package_name + '/ajax/basic/command', payload, function(data){
@@ -149,6 +165,43 @@ $('body').on('click', '#tabEnd', function(){
   doBrowse(1);
 });
 $('body').on('click', '#browseBtn', function(e){ e.preventDefault(); doBrowse(1); });
+
+// ── 제목 검색 — 결과를 목록 영역에 그대로 렌더 (카드/버튼 동작 동일) ──
+function doSearch(q){
+  $('#browse_mode').html('');
+  $('#browse_results').html('<div class="col-12"><small>검색 중...</small></div>');
+  $('#browse_pager').html('');
+  $.post('/' + package_name + '/ajax/basic/command',
+         {command: 'msearch', arg1: q, query: q},
+         function(data){
+    if (data && data.ret === 'success'){
+      var n = (data.results || []).length;
+      $('#browse_mode').html(
+        '<span class="badge badge-info">검색</span> <strong>' + esc(q) + '</strong> — ' + n + '건'
+        + ' <button id="backToBrowse" class="btn btn-sm btn-outline-secondary" style="margin-left:8px;">목록으로</button>');
+      renderCards(data.results, 'browse_results', '검색 결과 없음');
+    } else {
+      $('#browse_results').html('');
+      $.notify((data && data.msg) || '검색 실패', {className: 'error'});
+    }
+  }).fail(function(xhr){
+    $.notify('서버 호출 실패: ' + xhr.status, {className: 'error'});
+  });
+}
+$('body').on('click', '#searchBtn', function(e){
+  e.preventDefault();
+  var q = ($('#search_query').val() || '').trim();
+  if (!q) { $.notify('검색어를 입력하세요', {className: 'warn'}); return; }
+  doSearch(q);
+});
+$('body').on('keypress', '#search_query', function(e){
+  if (e.which === 13){ e.preventDefault(); $('#searchBtn').click(); }
+});
+$('body').on('click', '#backToBrowse', function(e){
+  e.preventDefault();
+  $('#search_query').val('');
+  doBrowse(1);
+});
 $('body').on('click', '.js-pg', function(e){ e.preventDefault(); doBrowse(parseInt($(this).data('pg'), 10) || 1); });
 
 // 목록 → 즉시 다운로드 (진행 상황 탭에서 확인)
